@@ -1,0 +1,40 @@
+# Core API framework
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# LangGraph orchestrator + in-memory checkpointing
+langgraph>=0.2
+langchain-core>=0.3
+langgraph-checkpoint>=1.0
+
+# LLM provider — OpenRouter via OpenAI-compatible SDK
+openai>=1.30
+httpx>=0.27
+
+# Data validation & settings
+pydantic>=2.8
+pydantic-settings>=2.0
+
+# Database (future: Postgres + pgvector)
+sqlalchemy>=2.0
+psycopg[binary]>=3.2
+pgvector>=0.3
+
+# Cache / pub-sub (future: Redis)
+redis>=5.0
+
+# Environment
+python-dotenv>=1.0
+
+# WebSocket transport
+websockets>=13.0
+
+# Document parsing (file upload / RAG)
+pypdf>=5.0
+python-docx>=1.0
+python-multipart>=0.0.9
+
+# Testing
+pytest>=8.0
+pytest-asyncio>=0.23
+httpx>=0.27  # also used for AsyncClient in tests
