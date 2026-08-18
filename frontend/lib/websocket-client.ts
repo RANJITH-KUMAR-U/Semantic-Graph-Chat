@@ -1,4 +1,16 @@
-const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws/chat";
+function getWsBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL;
+  }
+  if (process.env.NEXT_PUBLIC_API_BASE_URL) {
+    const httpUrl = process.env.NEXT_PUBLIC_API_BASE_URL.replace(/\/+$/, "");
+    const wsUrl = httpUrl.replace(/^http/, "ws");
+    return `${wsUrl}/ws/chat`;
+  }
+  return "ws://localhost:8000/ws/chat";
+}
+
+const WS_BASE_URL = getWsBaseUrl();
 
 export interface WSMessage {
   type: "connected" | "routing" | "token" | "done" | "error" | "summary_status";
