@@ -71,7 +71,12 @@ export default function Home() {
           setSessionId(data.session_id);
           localStorage.setItem("chat_session_id", data.session_id);
         })
-        .catch(console.error);
+        .catch((err) => {
+          console.warn("Backend session endpoint unreachable, generating local fallback session:", err);
+          const fallbackId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `session_${Date.now()}`;
+          setSessionId(fallbackId);
+          localStorage.setItem("chat_session_id", fallbackId);
+        });
     }
   }, []);
 
