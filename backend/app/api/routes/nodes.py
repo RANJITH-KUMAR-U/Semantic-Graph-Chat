@@ -64,8 +64,10 @@ async def list_nodes(session_id: str) -> list[NodeOut]:
     from app.services.similarity import check_node_consistency
     for node_id, node_data in nodes_raw.items():
         msg_count = len(node_data.get("messages", []))
-        # Guard: Only list nodes that have at least 1 real message (prevents ghost nodes)
-        if msg_count == 0:
+        archived_count = len(node_data.get("archived_messages") or [])
+        doc_chunk_count = len(node_data.get("document_chunks") or [])
+        # Guard: Only list nodes that have at least 1 real message or document chunks (prevents ghost nodes)
+        if msg_count == 0 and archived_count == 0 and doc_chunk_count == 0:
             continue
 
         # Semantic consistency check

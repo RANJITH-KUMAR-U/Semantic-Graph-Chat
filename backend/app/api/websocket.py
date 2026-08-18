@@ -15,17 +15,23 @@ See PRD section 6.2 "Managing the Latency Tax":
   - Stream "routing" indicator *immediately* before LLM call.
   - Keep the WebSocket open across multiple turns (no reconnect per message).
 """
+import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core.config import settings
 from app.graph.graph_builder import get_graph
 from app.graph.nodes import assemble_context, create_node_node, create_subtopic_node
-from app.graph.router import router_node, routing_edge
+from app.graph.router import router_node
+from app.graph.summarizer import trigger_summary_refresh, trigger_node_summary_refresh
 from app.models.schemas import WSMessage
 from app.services import llm_service
-from app.core.config import settings
+from app.services.cross_reference import detect_cross_reference
+from app.services.retriever import retrieve_relevant_chunks
+from app.services.similarity import compute_all_relations
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +160,6 @@ async def chat_ws(websocket: WebSocket, session_id: str) -> None:
             # If so, inject that node's summary as bounded one-turn-only context.
             # CRITICAL: the reference snippet is ONLY added to the system_prompt
             # for this call; it is never written to either node's message history.
-            from app.services.cross_reference import detect_cross_reference
             all_nodes = routing_result.get("working_state", {}).get("nodes") or {}
             referenced_node_id: str | None = None
             referenced_node_title: str | None = None
@@ -192,10 +197,9 @@ async def chat_ws(websocket: WebSocket, session_id: str) -> None:
 
             # ── Document RAG: retrieve relevant chunks from the active node ────
             source_citations: list[dict] | None = None
-            from app.services.retriever import retrieve_relevant_chunks
             doc_chunks = all_nodes.get(node_id, {}).get("document_chunks", [])
             if doc_chunks:
-                relevant = retrieve_relevant_chunks(content, doc_chunks, top_k=3)
+                relevant = await retrieve_relevant_chunks(content, doc_chunks, top_k=3)
                 if relevant:
                     doc_context = "\n\n".join(
                         f"[Source: {c['source_filename']}]\n{c['content']}"
@@ -296,8 +300,6 @@ async def chat_ws(websocket: WebSocket, session_id: str) -> None:
             )
 
             # ── Trigger background global context summary ───────────────
-            from app.graph.summarizer import trigger_summary_refresh
-            import asyncio
             asyncio.create_task(
                 trigger_summary_refresh(graph, graph_config, session_id, websocket)
             )
@@ -350,8 +352,6 @@ async def _run_routing(
     """
     Run only the routing phase and return node & confidence metadata.
     """
-    from app.graph.nodes import assemble_context
-
     try:
         snapshot = graph.get_state(config)
         state = snapshot.values if (snapshot and snapshot.values) else {}
@@ -458,7 +458,6 @@ async def _persist_turn(
         current_state = {}
 
     nodes = dict(current_state.get("nodes", {}))
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
 
     user_msg_obj = {
@@ -494,6 +493,12 @@ async def _persist_turn(
             "last_active_at": now,
             "parent_node_id": None,
             "depth": 0,
+            "node_summary": "",
+            "local_summary": "",
+            "archived_messages": [],
+            "document_chunks": [],
+            "related_node_ids": [],
+            "possible_duplicate_of": None,
         }
 
     # ── Token accounting (bounded memory fix) ──────────────────────────────
@@ -571,7 +576,6 @@ async def _persist_turn(
     })
 
     # Feature 2: Recompute relatedness between all nodes
-    from app.services.similarity import compute_all_relations
     try:
         relation_updates = compute_all_relations(nodes)
         for nid, updates in relation_updates.items():
@@ -605,17 +609,14 @@ async def _persist_turn(
 
     # ── Trigger per-node compression if live message count exceeds window ──
     # This mirrors the global summarizer trigger — fire-and-forget background task.
-    from app.graph.summarizer import trigger_node_summary_refresh
-    from app.core.config import settings as _settings
-    keep_last_n = _settings.node_keep_last_n
+    keep_last_n = settings.node_keep_last_n
     node_msg_count = len(nodes.get(node_id, {}).get("messages") or [])
     if node_msg_count > keep_last_n:
         logger.info(
             "Node %s has %d live messages (threshold=%d) — scheduling local summary compression.",
             node_id, node_msg_count, keep_last_n,
         )
-        import asyncio as _asyncio
-        _asyncio.create_task(
+        asyncio.create_task(
             trigger_node_summary_refresh(graph, config, node_id, keep_last_n)
         )
 

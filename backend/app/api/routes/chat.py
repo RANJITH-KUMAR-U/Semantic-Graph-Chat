@@ -52,12 +52,13 @@ def _state_to_session_out(session_id: str, state: dict) -> SessionOut:
                 node_id=node_id,
                 session_id=session_id,
                 title=node_data.get("title", "Untitled"),
-                message_count=len(node_data.get("messages", [])),
+                message_count=len(node_data.get("messages", [])) + len(node_data.get("archived_messages") or []),
                 created_at=created_at,
                 last_active_at=last_active_at,
                 parent_node_id=node_data.get("parent_node_id"),
                 depth=node_data.get("depth", 0),
                 possible_duplicate_of=node_data.get("possible_duplicate_of"),
+                document_chunk_count=len(node_data.get("document_chunks") or []),
             )
         )
 

@@ -265,14 +265,32 @@ def _chunk_code(filename: str, text: str) -> list[DocumentChunk]:
     """
     Split code files on function/class boundaries.
 
-    Heuristic: split on lines that start with `def `, `class `, `function `,
-    `export `, `async def `, etc. Fallback to line-window splitting if no
-    boundaries found.
+    For Python files (.py): uses ast.parse() for exact, syntax-aware
+    splitting at function/class boundaries.  Falls back to regex on
+    SyntaxError.
+
+    For all other languages: uses a regex heuristic to split on lines
+    that start with `def `, `class `, `function `, `export `, etc.
+    Falls back to line-window splitting if no boundaries are found.
     """
     if not text.strip():
         return []
 
-    # Try to split on top-level definitions
+    # ── Python-specific AST path ──────────────────────────────────────
+    ext = _get_extension(filename)
+    if ext == ".py":
+        try:
+            ast_chunks = _chunk_python_ast(filename, text)
+            if ast_chunks:
+                return ast_chunks
+            # Empty result (e.g. script with no top-level defs) → fall through
+        except SyntaxError:
+            logger.debug(
+                "AST parse failed for %s — falling back to regex chunking",
+                filename,
+            )
+
+    # ── Regex-based path (all non-Python files, or AST fallback) ──────
     boundary_pattern = re.compile(
         r"^(?:def |async def |class |function |export (?:default )?(?:function |class |const |let ))",
         re.MULTILINE,
@@ -327,6 +345,107 @@ def _chunk_code(filename: str, text: str) -> list[DocumentChunk]:
         c["total_chunks"] = len(all_chunks)
 
     return all_chunks
+
+
+# ── AST-based Python chunking ─────────────────────────────────────────
+
+
+def _chunk_python_ast(filename: str, text: str) -> list[DocumentChunk]:
+    """
+    Split a Python source file using the `ast` module for exact,
+    syntax-aware boundaries.
+
+    Walks top-level nodes in the parsed AST and slices source lines
+    using each node's `.lineno` and `.end_lineno`.  This correctly
+    handles strings/docstrings that contain text like ``def fake()``
+    — unlike regex, the AST parser knows these are string literals,
+    not real function definitions.
+
+    Falls back by raising SyntaxError if the source cannot be parsed.
+
+    Returns an empty list if the file has no top-level function/class
+    definitions (the caller should fall through to regex/line-window
+    splitting in that case).
+    """
+    import ast as _ast
+
+    tree = _ast.parse(text, filename=filename)
+    source_lines = text.splitlines(keepends=True)
+
+    # Collect top-level function and class definitions
+    definition_nodes: list[_ast.AST] = []
+    for node in _ast.iter_child_nodes(tree):
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            definition_nodes.append(node)
+
+    if not definition_nodes:
+        return []  # No definitions → let caller fall through
+
+    # Sort by line number (should already be ordered, but be safe)
+    definition_nodes.sort(key=lambda n: n.lineno)
+
+    segments: list[str] = []
+
+    # Preamble: everything before the first definition (imports, module docstring, etc.)
+    first_def_line = definition_nodes[0].lineno  # 1-indexed
+    if first_def_line > 1:
+        preamble = "".join(source_lines[: first_def_line - 1]).strip()
+        if preamble:
+            segments.append(preamble)
+
+    # Each definition as its own chunk
+    for node in definition_nodes:
+        start_line = node.lineno - 1      # convert to 0-indexed
+        end_line = node.end_lineno         # end_lineno is 1-indexed, inclusive → use as exclusive slice end
+        if end_line is None:
+            # Shouldn't happen with Python 3.8+ but handle gracefully
+            end_line = len(source_lines)
+        segment = "".join(source_lines[start_line:end_line]).strip()
+        if segment:
+            segments.append(segment)
+
+    # Epilogue: anything after the last definition (top-level statements, if __name__ blocks)
+    last_end = definition_nodes[-1].end_lineno or len(source_lines)
+    if last_end < len(source_lines):
+        epilogue = "".join(source_lines[last_end:]).strip()
+        if epilogue:
+            segments.append(epilogue)
+
+    # Build DocumentChunks, splitting oversized segments
+    all_chunks: list[DocumentChunk] = []
+    for segment in segments:
+        if len(segment) > MAX_CHUNK_CHARS:
+            sub_chunks = _recursive_split(segment, MAX_CHUNK_CHARS, OVERLAP_CHARS)
+            for sc in sub_chunks:
+                all_chunks.append(DocumentChunk(
+                    chunk_id=f"chunk_{uuid.uuid4().hex[:8]}",
+                    source_filename=filename,
+                    content=sc,
+                    chunk_index=len(all_chunks),
+                    total_chunks=0,
+                    content_type="code",
+                    file_path=filename,
+                ))
+        else:
+            all_chunks.append(DocumentChunk(
+                chunk_id=f"chunk_{uuid.uuid4().hex[:8]}",
+                source_filename=filename,
+                content=segment,
+                chunk_index=len(all_chunks),
+                total_chunks=0,
+                content_type="code",
+                file_path=filename,
+            ))
+
+    for c in all_chunks:
+        c["total_chunks"] = len(all_chunks)
+
+    logger.info(
+        "AST-chunked Python file %r → %d chunks from %d definitions",
+        filename, len(all_chunks), len(definition_nodes),
+    )
+    return all_chunks
+
 
 
 # ── Generic text chunking ──────────────────────────────────────────────

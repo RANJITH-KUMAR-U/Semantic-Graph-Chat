@@ -41,7 +41,8 @@ def test_chunk_unsupported_extension():
         chunk_file("executable.exe", b"binary content")
 
 
-def test_retriever_ranking():
+@pytest.mark.asyncio
+async def test_retriever_ranking():
     chunks = [
         {
             "chunk_id": "c1",
@@ -61,12 +62,47 @@ def test_retriever_ranking():
     ]
 
     # Query about binary trees
-    results = retrieve_relevant_chunks("Tell me about binary search trees", chunks, top_k=2)
+    results = await retrieve_relevant_chunks("Tell me about binary search trees", chunks, top_k=2)
     assert len(results) >= 1
     assert results[0]["chunk_id"] == "c2"
     assert results[0]["source_filename"] == "trees.txt"
 
     # Query about sorting
-    results_sort = retrieve_relevant_chunks("How does quicksort work?", chunks, top_k=2)
+    results_sort = await retrieve_relevant_chunks("How does quicksort work?", chunks, top_k=2)
     assert len(results_sort) >= 1
     assert results_sort[0]["chunk_id"] == "c1"
+
+
+def test_document_node_listed_without_messages():
+    """Verify that a node with document chunks but 0 messages is returned by list_nodes API."""
+    from app.graph.graph_builder import get_graph
+    from fastapi.testclient import TestClient
+    from app.main import app
+    import uuid
+
+    client = TestClient(app)
+    session_id = f"test_doc_node_{uuid.uuid4().hex[:8]}"
+
+    # Seed state with a node that has document_chunks but 0 messages
+    graph = get_graph()
+    config = {"configurable": {"thread_id": session_id}}
+    doc_node = {
+        "title": "Resume Overview",
+        "messages": [],
+        "document_chunks": [{"chunk_id": "c1", "content": "AI Agent Experience"}],
+        "created_at": "2026-08-18T10:00:00+00:00",
+        "last_active_at": "2026-08-18T10:00:00+00:00",
+        "parent_node_id": None,
+        "depth": 0,
+    }
+    graph.update_state(config, {"nodes": {"node_doc1": doc_node}})
+
+    # Fetch nodes via REST API
+    resp = client.get(f"/api/sessions/{session_id}/nodes")
+    assert resp.status_code == 200
+    nodes = resp.json()
+    assert len(nodes) == 1
+    assert nodes[0]["node_id"] == "node_doc1"
+    assert nodes[0]["title"] == "Resume Overview"
+    assert nodes[0]["document_chunk_count"] == 1
+

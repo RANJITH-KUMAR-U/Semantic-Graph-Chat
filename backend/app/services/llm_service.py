@@ -29,15 +29,18 @@ _client: AsyncOpenAI | None = None
 
 def _get_client() -> AsyncOpenAI:
     """Return the OpenAI-compatible AsyncOpenAI client using current settings."""
-    api_key = settings.openrouter_api_key or "sk-or-v1-dummy"
-    return AsyncOpenAI(
-        api_key=api_key,
-        base_url=settings.openrouter_base_url,
-        default_headers={
-            "HTTP-Referer": "http://localhost:8000",
-            "X-Title": "Semantic Graph Chat",
-        },
-    )
+    global _client
+    if _client is None:
+        api_key = settings.openrouter_api_key or "sk-or-v1-dummy"
+        _client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=settings.openrouter_base_url,
+            default_headers={
+                "HTTP-Referer": "http://localhost:8000",
+                "X-Title": "Semantic Graph Chat",
+            },
+        )
+    return _client
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -106,11 +109,11 @@ async def call_router_llm(
     # Exclude ghost nodes with 0 messages
     root_nodes = {
         nid: nd for nid, nd in active_nodes.items()
-        if nd.get("depth", 0) == 0 and len(nd.get("messages", [])) > 0
+        if nd.get("depth", 0) == 0 and (len(nd.get("messages", [])) > 0 or len(nd.get("document_chunks") or []) > 0)
     }
     sub_nodes = {
         nid: nd for nid, nd in active_nodes.items()
-        if nd.get("depth", 0) == 1 and len(nd.get("messages", [])) > 0
+        if nd.get("depth", 0) == 1 and (len(nd.get("messages", [])) > 0 or len(nd.get("document_chunks") or []) > 0)
     }
 
     if root_nodes or sub_nodes:

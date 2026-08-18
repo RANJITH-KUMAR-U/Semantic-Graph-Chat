@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     router_model_alt: str = "google/gemma-4-26b-a4b-it:free"
     # High-quality model for response generation
     generator_model: str = "mistralai/mistral-7b-instruct:free"
+    # Embedding model for semantic retrieval (RAG chunk ranking)
+    embedding_model: str = "nvidia/nemotron-3-embed-1b:free"
 
     # ── Summarizer ──────────────────────────────────────────────────────
     # Refresh global_summary every N turns (PRD section 3.3 step 7)
