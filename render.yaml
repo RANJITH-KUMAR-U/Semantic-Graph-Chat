@@ -27,4 +27,4 @@ services:
         fromService:
           type: web
           name: semantic-graph-chat-backend
-          property: url
+          property: host

@@ -3,9 +3,11 @@ function getWsBaseUrl(): string {
     return process.env.NEXT_PUBLIC_WS_URL;
   }
   if (process.env.NEXT_PUBLIC_API_BASE_URL) {
-    const httpUrl = process.env.NEXT_PUBLIC_API_BASE_URL.replace(/\/+$/, "");
-    const wsUrl = httpUrl.replace(/^http/, "ws");
-    return `${wsUrl}/ws/chat`;
+    const raw = process.env.NEXT_PUBLIC_API_BASE_URL.trim().replace(/\/+$/, "");
+    const cleanHost = raw.replace(/^https?:\/\//, "").replace(/^wss?:\/\//, "");
+    const isLocalhost = cleanHost.includes("localhost") || cleanHost.includes("127.0.0.1");
+    const protocol = isLocalhost ? "ws" : "wss";
+    return `${protocol}://${cleanHost}/ws/chat`;
   }
   return "ws://localhost:8000/ws/chat";
 }

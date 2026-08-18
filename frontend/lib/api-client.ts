@@ -1,4 +1,14 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+function getApiBaseUrl(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (!envUrl) return "http://localhost:8000";
+  const trimmed = envUrl.trim().replace(/\/+$/, "");
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 export interface SessionData {
   session_id: string;
