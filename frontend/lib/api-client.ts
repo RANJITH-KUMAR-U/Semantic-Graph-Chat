@@ -1,19 +1,20 @@
-function getApiBaseUrl(): string {
+export function getApiBaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (!envUrl) {
-    if (typeof window !== "undefined" && window.location.hostname.includes("vercel.app")) {
+  if (envUrl) {
+    const trimmed = envUrl.trim().replace(/\/+$/, "");
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      return trimmed;
+    }
+    return `https://${trimmed}`;
+  }
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host !== "localhost" && host !== "127.0.0.1") {
       return "https://semantic-graph-chat.onrender.com";
     }
-    return "http://localhost:8000";
   }
-  const trimmed = envUrl.trim().replace(/\/+$/, "");
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-    return trimmed;
-  }
-  return `https://${trimmed}`;
+  return "http://localhost:8000";
 }
-
-const API_BASE_URL = getApiBaseUrl();
 
 export interface SessionData {
   session_id: string;
@@ -116,7 +117,8 @@ export function buildNodeTree(flatNodes: TopicNode[]): TopicTreeNode[] {
 }
 
 export async function createSession(sessionId?: string): Promise<SessionData> {
-  const response = await fetch(`${API_BASE_URL}/api/sessions`, {
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(sessionId ? { session_id: sessionId } : {}),
@@ -126,21 +128,24 @@ export async function createSession(sessionId?: string): Promise<SessionData> {
 }
 
 export async function listNodes(sessionId: string): Promise<TopicNode[]> {
-  const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/nodes`);
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/nodes`);
   if (response.status === 404) return [];
   if (!response.ok) throw new Error("Failed to fetch nodes");
   return response.json();
 }
 
 export async function getNodeMessages(sessionId: string, nodeId: string) {
-  const response = await fetch(`${API_BASE_URL}/api/nodes/${nodeId}/messages?session_id=${sessionId}`);
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/nodes/${nodeId}/messages?session_id=${sessionId}`);
   if (response.status === 404) return [];
   if (!response.ok) throw new Error("Failed to fetch node messages");
   return response.json();
 }
 
 export async function forceRoute(sessionId: string, nodeId: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/nodes/${nodeId}/force-route`, {
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/nodes/${nodeId}/force-route`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),
@@ -149,7 +154,8 @@ export async function forceRoute(sessionId: string, nodeId: string): Promise<voi
 }
 
 export async function getSessionSummary(sessionId: string): Promise<{ global_summary: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/summary`);
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/summary`);
   if (response.status === 404) {
     return { global_summary: "" };
   }
@@ -163,7 +169,8 @@ export async function reassignMessage(
   targetNodeId?: string,
   newTopicTitle?: string
 ): Promise<{ success: boolean; target_node_id: string; target_node_title: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/messages/${messageId}/reassign`, {
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/messages/${messageId}/reassign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -181,7 +188,8 @@ export async function mergeNodes(
   sourceNodeId: string,
   targetNodeId: string
 ): Promise<{ success: boolean; target_node_id: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/nodes/merge`, {
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/nodes/merge`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -196,13 +204,15 @@ export async function mergeNodes(
 
 export async function searchMessages(sessionId: string, query: string): Promise<SearchResult[]> {
   if (!query.trim()) return [];
-  const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/search?q=${encodeURIComponent(query)}`);
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/search?q=${encodeURIComponent(query)}`);
   if (!response.ok) throw new Error("Failed to search messages");
   return response.json();
 }
 
 export async function getSessionRecap(sessionId: string): Promise<SessionRecap> {
-  const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/recap`);
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/recap`);
   if (!response.ok) throw new Error("Failed to get session recap");
   return response.json();
 }
@@ -211,14 +221,16 @@ export async function getSessionRecap(sessionId: string): Promise<SessionRecap> 
 
 /** Feature 3: Get routing decision timeline log */
 export async function getRoutingLog(sessionId: string): Promise<RoutingLogEntry[]> {
-  const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/routing-log`);
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/routing-log`);
   if (!response.ok) throw new Error("Failed to fetch routing log");
   return response.json();
 }
 
 /** Feature 4: Export session as Markdown — triggers browser download */
 export async function exportSession(sessionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/export`);
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/export`);
   if (!response.ok) throw new Error("Failed to export session");
   const blob = await response.blob();
   const url = window.URL.createObjectURL(blob);
@@ -233,7 +245,8 @@ export async function exportSession(sessionId: string): Promise<void> {
 
 /** Feature 5: Get list of available router models */
 export async function getAvailableRouterModels(): Promise<RouterModelInfo[]> {
-  const response = await fetch(`${API_BASE_URL}/api/config/available-router-models`);
+  const baseUrl = getApiBaseUrl();
+  const response = await fetch(`${baseUrl}/api/config/available-router-models`);
   if (!response.ok) throw new Error("Failed to fetch router models");
   return response.json();
 }
@@ -243,10 +256,11 @@ export async function uploadFile(
   sessionId: string,
   file: File
 ): Promise<UploadStatus> {
+  const baseUrl = getApiBaseUrl();
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/upload`, {
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/upload`, {
     method: "POST",
     body: formData,
   });
@@ -258,4 +272,3 @@ export async function uploadFile(
 
   return response.json();
 }
-

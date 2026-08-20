@@ -1,4 +1,4 @@
-function getWsBaseUrl(): string {
+export function getWsBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_WS_URL) {
     return process.env.NEXT_PUBLIC_WS_URL;
   }
@@ -9,13 +9,14 @@ function getWsBaseUrl(): string {
     const protocol = isLocalhost ? "ws" : "wss";
     return `${protocol}://${cleanHost}/ws/chat`;
   }
-  if (typeof window !== "undefined" && window.location.hostname.includes("vercel.app")) {
-    return "wss://semantic-graph-chat.onrender.com/ws/chat";
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host !== "localhost" && host !== "127.0.0.1") {
+      return "wss://semantic-graph-chat.onrender.com/ws/chat";
+    }
   }
   return "ws://localhost:8000/ws/chat";
 }
-
-const WS_BASE_URL = getWsBaseUrl();
 
 export interface WSMessage {
   type: "connected" | "routing" | "token" | "done" | "error" | "summary_status";
@@ -56,7 +57,8 @@ export class ChatWebSocket {
 
   connect(onMessage: MessageHandler) {
     this.onMessage = onMessage;
-    this.ws = new WebSocket(`${WS_BASE_URL}/${this.sessionId}`);
+    const wsBaseUrl = getWsBaseUrl();
+    this.ws = new WebSocket(`${wsBaseUrl}/${this.sessionId}`);
 
     this.ws.onmessage = (event) => {
       try {
