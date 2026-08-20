@@ -9,6 +9,9 @@ function getWsBaseUrl(): string {
     const protocol = isLocalhost ? "ws" : "wss";
     return `${protocol}://${cleanHost}/ws/chat`;
   }
+  if (typeof window !== "undefined" && window.location.hostname.includes("vercel.app")) {
+    return "wss://semantic-graph-chat.onrender.com/ws/chat";
+  }
   return "ws://localhost:8000/ws/chat";
 }
 

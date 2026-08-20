@@ -1,6 +1,11 @@
 function getApiBaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (!envUrl) return "http://localhost:8000";
+  if (!envUrl) {
+    if (typeof window !== "undefined" && window.location.hostname.includes("vercel.app")) {
+      return "https://semantic-graph-chat.onrender.com";
+    }
+    return "http://localhost:8000";
+  }
   const trimmed = envUrl.trim().replace(/\/+$/, "");
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
     return trimmed;
