@@ -64,19 +64,42 @@ def _clean_json_str(raw: str) -> str:
     return cleaned
 
 
+DEPRECATED_MODELS = {
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "mistralai/mistral-7b-instruct:free",
+    "huggingfaceh4/zephyr-7b-beta:free",
+    "openchat/openchat-7b:free",
+    "deepseek/deepseek-r1:free",
+    "google/gemini-2.0-flash-exp:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free",
+    "mistralai/mistral-small-24b-instruct-2501:free",
+    "inclusionai/ling-3.0-flash:free",
+}
+
+
+def _sanitize_model_name(model_name: str | None) -> str:
+    """Return an active model if model_name is empty or in DEPRECATED_MODELS."""
+    if not model_name or model_name in DEPRECATED_MODELS:
+        return "nvidia/nemotron-3.5-lightning:free"
+    return model_name
+
+
 def _get_candidate_models(configured_model: str) -> list[str]:
     """Return an ordered list of candidate models for resilience against 404s."""
+    sanitized = _sanitize_model_name(configured_model)
     candidates = [
-        configured_model,
+        sanitized,
         "nvidia/nemotron-3.5-lightning:free",
         "liquid/lfm-2.5-2.6b:free",
         "openai/gpt-oss-20b:free",
         "nvidia/nemotron-nano-9b-v2:free",
         "google/gemma-4-31b-it:free",
     ]
-    # Remove duplicates while preserving order
+    # Filter out deprecated models and remove duplicates while preserving order
     seen = set()
-    return [m for m in candidates if not (m in seen or seen.add(m))]
+    return [m for m in candidates if m not in DEPRECATED_MODELS and not (m in seen or seen.add(m))]
 
 
 # ── Router LLM ─────────────────────────────────────────────────────────
