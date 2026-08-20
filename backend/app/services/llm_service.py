@@ -68,10 +68,11 @@ def _get_candidate_models(configured_model: str) -> list[str]:
     """Return an ordered list of candidate models for resilience against 404s."""
     candidates = [
         configured_model,
-        "google/gemma-4-26b-a4b-it:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "liquid/lfm-2.5-2.6b:free",
         "openai/gpt-oss-20b:free",
         "nvidia/nemotron-nano-9b-v2:free",
-        "inclusionai/ling-3.0-flash:free",
+        "google/gemma-4-31b-it:free",
     ]
     # Remove duplicates while preserving order
     seen = set()
