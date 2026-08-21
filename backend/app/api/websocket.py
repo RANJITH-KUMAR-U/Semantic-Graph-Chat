@@ -406,7 +406,8 @@ async def _run_routing(
         local_summary = ctx.get("local_summary", "")
 
     try:
-        graph.update_state(config, {"nodes": nodes, "active_node_id": node_id or "", "force_node_id": None})
+        if node_id and node_id != "unknown":
+            graph.update_state(config, {"nodes": nodes, "active_node_id": node_id, "force_node_id": None})
     except Exception as exc:
         logger.warning("Failed to persist routing nodes state: %s", exc)
 
