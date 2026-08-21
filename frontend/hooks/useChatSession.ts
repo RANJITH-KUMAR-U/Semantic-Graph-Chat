@@ -202,6 +202,13 @@ export function useChatSession(sessionId: string | null) {
           }
           break;
 
+        case "summary_status":
+          if (msg.global_summary) {
+            setGlobalSummary(msg.global_summary);
+            fetchNodes();
+          }
+          break;
+
         case "error":
           setIsRouting(false);
           setIsGenerating(false);

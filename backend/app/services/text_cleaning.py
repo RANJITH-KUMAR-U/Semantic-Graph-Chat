@@ -146,4 +146,13 @@ def strip_reasoning(text: str) -> str:
         else:
             break
 
+    # 7. Strip prompt-echo lines (e.g. quotes of system instructions or prompt headers)
+    filtered_lines = []
+    for line in cleaned.splitlines():
+        l_lower = line.lower().strip()
+        if "below is recent activity" in l_lower or "you are a context summariser" in l_lower or "main topics discussed so far" in l_lower:
+            continue
+        filtered_lines.append(line)
+    cleaned = "\n".join(filtered_lines).strip()
+
     return cleaned
