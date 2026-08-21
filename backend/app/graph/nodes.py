@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 from app.graph.state import GraphState, NodeData
 from app.services import llm_service
+from app.services.text_cleaning import strip_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -184,16 +185,26 @@ async def _generate_title(first_message: str, context_hint: str = "") -> str:
     """
     extra = f" {context_hint}" if context_hint else ""
     try:
-        title = await llm_service.call_generator_once(
+        raw_title = await llm_service.call_generator_once(
             messages=[{"role": "user", "content": first_message}],
             system_prompt=(
                 f"Generate a short topic title (3-5 words, no punctuation) that "
-                f"describes what the following message is about.{extra} "
-                "Reply with the title only — no explanation."
+                f"describes what the following message is about.{extra}\n"
+                "CRITICAL: Output ONLY the 3-5 word title on a single line. Do NOT output any thinking, reasoning, or explanation."
             ),
         )
-        title = title.strip().splitlines()[0].strip("\"'").strip()
-        if not title or title.startswith("[") or "error" in title.lower():
+        cleaned = strip_reasoning(raw_title).strip()
+        # Take the first non-empty line
+        lines = [line.strip().strip("\"'#* `") for line in cleaned.splitlines() if line.strip()]
+        title = lines[0] if lines else ""
+        # If title still contains reasoning cues or error indicator, fallback
+        if (
+            not title
+            or title.startswith("[")
+            or "error" in title.lower()
+            or "thinking process" in title.lower()
+            or len(title.split()) > 10
+        ):
             return _fallback_title(first_message)
         return title[:80]
     except Exception as exc:  # noqa: BLE001

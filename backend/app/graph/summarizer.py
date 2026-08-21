@@ -24,6 +24,7 @@ import logging
 
 from app.graph.state import GraphState
 from app.services import llm_service
+from app.services.text_cleaning import strip_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +81,13 @@ async def refresh_global_summary(state: GraphState) -> str:
     user_content = f"Recent session activity:\n\n{combined}"
 
     try:
-        summary = await llm_service.call_generator_once(
+        raw_summary = await llm_service.call_generator_once(
             messages=[{"role": "user", "content": user_content}],
             system_prompt=system_prompt,
         )
+        summary = strip_reasoning(raw_summary).strip()
         logger.info("Global summary refreshed (%d chars).", len(summary))
-        return summary.strip()
+        return summary
     except Exception as exc:  # noqa: BLE001
         logger.warning("Summarizer LLM call failed: %s", exc)
         return state.get("global_summary", "")
@@ -214,11 +216,11 @@ async def refresh_node_local_summary(
     )
 
     try:
-        new_summary = await llm_service.call_generator_once(
+        raw_summary = await llm_service.call_generator_once(
             messages=[{"role": "user", "content": prompt_content}],
             system_prompt=system_prompt,
         )
-        new_summary = new_summary.strip()
+        new_summary = strip_reasoning(raw_summary).strip()
         logger.info(
             "Node local summary refreshed for node %s (%d chars, archived %d messages).",
             node_id, len(new_summary), len(overflow),

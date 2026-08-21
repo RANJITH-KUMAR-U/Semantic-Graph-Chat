@@ -20,6 +20,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.services.text_cleaning import strip_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -110,16 +111,22 @@ def _sanitize_model_name(model_name: str | None) -> str:
     return model_name
 
 
-def _get_candidate_models(configured_model: str) -> list[str]:
+def _get_candidate_models(configured_model: str, secondary_model: str | None = None) -> list[str]:
     """
     Return an ordered list of candidate models for resilience against 404s.
     - Puts the configured (sanitized) model first
+    - Puts secondary_model second if specified
     - Follows with all other verified live free models
     - Removes any deprecated models
     """
     sanitized = _sanitize_model_name(configured_model)
-    # Build ordered list: sanitized first, then rest of live list
-    candidates = [sanitized] + [m for m in LIVE_FREE_MODELS if m != sanitized]
+    prefix = [sanitized]
+    if secondary_model:
+        sec_sanitized = _sanitize_model_name(secondary_model)
+        if sec_sanitized != sanitized:
+            prefix.append(sec_sanitized)
+
+    candidates = prefix + [m for m in LIVE_FREE_MODELS if m not in prefix]
     # Filter out deprecated and remove duplicates
     seen: set[str] = set()
     result = []
@@ -189,11 +196,10 @@ async def call_router_llm(
     else:
         nodes_desc = "(none — this is the first message)"
 
-# SECURITY-TODO: Implement API key rotation, request encryption, and audit logging for all OpenRouter calls in production.
-
     system_prompt = (
         "You are a semantic topic router for a multi-topic chat system that supports "
-        "hierarchical topic nodes (root topics and sub-topics).\n\n"
+        "hierarchical topic nodes (root topics and sub-topics).\n"
+        "You MUST respond with ONLY a valid JSON object. Do not output any reasoning, thinking process, or explanation outside the JSON.\n\n"
         "## Active Topic Tree\n"
         f"{nodes_desc}\n\n"
         "## 3-Way Classification Rules\n"
@@ -209,7 +215,7 @@ async def call_router_llm(
         "## Important Rules\n"
         "- Only create a sub-topic (create_subtopic) if there is a clear ROOT node it belongs under.\n"
         "- Do NOT create sub-topics of sub-topics (max depth = 1).\n"
-        "- Distinct specialized concepts (e.g., 'Pharmacovigilance' vs 'Pharmacodynamics' vs 'Clinical Trials', or 'Binary Trees' vs 'Sorting Algorithms') are SEPARATE topics. Do NOT route a distinct concept to an existing node unless the message explicitly asks to compare them.\n"
+        "- Distinct specialized concepts are SEPARATE topics. Do NOT route a distinct concept to an existing node unless the message explicitly asks to compare them.\n"
         "- Provide a confidence score between 0.0 and 1.0 (e.g. 0.92 for high confidence, 0.65 for medium).\n\n"
         "## Response Format\n"
         "Return ONLY a JSON object:\n"
@@ -223,12 +229,11 @@ async def call_router_llm(
 
     user_prompt = f"User message: {user_message!r}"
     client = _get_client()
-    # Feature 5: model_override is tried first if provided
-    base_candidates = _get_candidate_models(settings.router_model)
-    if model_override and model_override not in base_candidates:
-        candidate_models = [model_override] + base_candidates
-    elif model_override:
-        candidate_models = [model_override] + [m for m in base_candidates if m != model_override]
+    # Feature 5: model_override is tried first if provided; otherwise router_model then router_model_alt
+    base_candidates = _get_candidate_models(settings.router_model, settings.router_model_alt)
+    if model_override:
+        sanitized_override = _sanitize_model_name(model_override)
+        candidate_models = [sanitized_override] + [m for m in base_candidates if m != sanitized_override]
     else:
         candidate_models = base_candidates
 
@@ -285,6 +290,10 @@ async def call_router_llm(
             else:
                 result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
 
+            # Clean any reasoning meta-text from reasoning field
+            if "reasoning" in result and isinstance(result["reasoning"], str):
+                result["reasoning"] = strip_reasoning(result["reasoning"])
+
             model_used = model_name
             latency_ms = int((time.monotonic() - t_start) * 1000)
             result["model_used"] = model_used
@@ -310,13 +319,12 @@ async def call_router_llm(
 # ── Generator LLM (streaming) ──────────────────────────────────────────
 
 
-
 async def stream_generator(
     messages: list[dict[str, str]],
     system_prompt: str = "",
 ) -> AsyncGenerator[str, None]:
     """
-    Stream response tokens from the generator model.
+    Stream response tokens from the generator model with reasoning filter.
 
     Args:
         messages:      List of {"role": ..., "content": ...} dicts
@@ -326,9 +334,16 @@ async def stream_generator(
     Yields:
         Individual text tokens/chunks as they arrive from the API.
     """
+    clean_sys_prompt = system_prompt
+    if "Respond directly" not in clean_sys_prompt:
+        clean_sys_prompt = (
+            f"{system_prompt}\n\n"
+            "IMPORTANT: Output your response directly. Do NOT output thinking steps, reasoning preambles, or analysis of your thought process."
+        )
+
     full_messages = []
-    if system_prompt:
-        full_messages.append({"role": "system", "content": system_prompt})
+    if clean_sys_prompt:
+        full_messages.append({"role": "system", "content": clean_sys_prompt})
     full_messages.extend(messages)
 
     client = _get_client()
@@ -343,10 +358,21 @@ async def stream_generator(
                 temperature=0.7,
                 max_tokens=2048,
             )
+            # Buffer initial tokens to catch and discard <think> tags or reasoning preambles if generated
+            in_think_tag = False
             async for chunk in stream:
                 delta = chunk.choices[0].delta
                 if delta and delta.content:
-                    yield delta.content
+                    token = delta.content
+                    if "<think>" in token or "<reasoning>" in token:
+                        in_think_tag = True
+                        continue
+                    if "</think>" in token or "</reasoning>" in token:
+                        in_think_tag = False
+                        continue
+                    if in_think_tag:
+                        continue
+                    yield token
             return  # Successful stream completion
         except Exception as exc:  # noqa: BLE001
             logger.warning("Generator model %s failed (%s). Trying next candidate...", model_name, exc)
@@ -359,14 +385,20 @@ async def call_generator_once(
     system_prompt: str = "",
 ) -> str:
     """
-    Non-streaming generator call - returns the full response as a string.
+    Non-streaming generator call - returns the clean response as a string.
 
-    Used by the global summarizer and other non-interactive paths where
-    streaming is not needed.
+    Used by the global summarizer, title generation, and other non-interactive paths.
     """
+    clean_sys_prompt = system_prompt
+    if "Do NOT include any reasoning" not in clean_sys_prompt:
+        clean_sys_prompt = (
+            f"{system_prompt}\n"
+            "Provide ONLY the final output. Do NOT include any reasoning, thinking process, or meta-commentary."
+        )
+
     full_messages = []
-    if system_prompt:
-        full_messages.append({"role": "system", "content": system_prompt})
+    if clean_sys_prompt:
+        full_messages.append({"role": "system", "content": clean_sys_prompt})
     full_messages.extend(messages)
 
     client = _get_client()
@@ -382,6 +414,10 @@ async def call_generator_once(
             )
             content = response.choices[0].message.content or ""
             if content:
+                # Strip any thinking / reasoning preambles
+                cleaned = strip_reasoning(content)
+                if cleaned:
+                    return cleaned
                 return content
         except Exception as exc:  # noqa: BLE001
             logger.warning("Generator once model %s failed (%s). Trying next candidate...", model_name, exc)

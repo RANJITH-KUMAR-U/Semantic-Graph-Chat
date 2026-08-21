@@ -20,9 +20,9 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     # Fast/cheap model for routing classification
-    router_model: str = "nvidia/nemotron-3.5-lightning:free"
+    router_model: str = "nvidia/nemotron-nano-9b-v2:free"
     # Second router model for the playground toggle (Feature 5)
-    router_model_alt: str = "nvidia/nemotron-nano-9b-v2:free"
+    router_model_alt: str = "nvidia/nemotron-3.5-lightning:free"
     # High-quality model for response generation
     generator_model: str = "nvidia/nemotron-3.5-lightning:free"
     # Embedding model for semantic retrieval (RAG chunk ranking)
