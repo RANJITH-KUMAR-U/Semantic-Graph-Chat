@@ -13,16 +13,109 @@ providers in one place without touching graph logic.
 """
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI
 
 from app.core.config import settings
 from app.services.text_cleaning import strip_reasoning
 
 logger = logging.getLogger(__name__)
+
+# ── Gemini Direct API Helpers ──────────────────────────────────────────
+
+async def _call_gemini_api(
+    messages: list[dict[str, str]],
+    system_prompt: str = "",
+    model_name: str = "gemini-3.6-flash",
+    temperature: float = 0.2,
+    max_tokens: int = 1024,
+) -> str:
+    """Call Google Gemini generateContent REST API directly."""
+    key = settings.gemini_api_key
+    if not key:
+        raise ValueError("GEMINI_API_KEY is not configured.")
+
+    clean_model = model_name.replace("models/", "").replace(":free", "")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={key}"
+
+    contents = []
+    for m in messages:
+        role = "model" if m.get("role") in ("assistant", "model") else "user"
+        contents.append({"role": role, "parts": [{"text": m.get("content", "")}]})
+
+    payload: dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+        },
+    }
+    if system_prompt:
+        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini API error ({resp.status_code}): {resp.text[:200]}")
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise RuntimeError("No candidates returned from Gemini API.")
+        return candidates[0]["content"]["parts"][0]["text"]
+
+
+async def _stream_gemini_api(
+    messages: list[dict[str, str]],
+    system_prompt: str = "",
+    model_name: str = "gemini-3.6-flash",
+    temperature: float = 0.7,
+) -> AsyncGenerator[str, None]:
+    """Stream tokens directly from Google Gemini streamGenerateContent REST API."""
+    key = settings.gemini_api_key
+    if not key:
+        raise ValueError("GEMINI_API_KEY is not configured.")
+
+    clean_model = model_name.replace("models/", "").replace(":free", "")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:streamGenerateContent?alt=sse&key={key}"
+
+    contents = []
+    for m in messages:
+        role = "model" if m.get("role") in ("assistant", "model") else "user"
+        contents.append({"role": role, "parts": [{"text": m.get("content", "")}]})
+
+    payload: dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": temperature,
+            "maxOutputTokens": 2048,
+        },
+    }
+    if system_prompt:
+        payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        async with client.stream("POST", url, json=payload) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"Gemini streaming error ({resp.status_code})")
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    try:
+                        chunk_json = json.loads(line[6:])
+                        part_text = (
+                            chunk_json.get("candidates", [{}])[0]
+                            .get("content", {})
+                            .get("parts", [{}])[0]
+                            .get("text", "")
+                        )
+                        if part_text:
+                            yield part_text
+                    except Exception:
+                        pass
 
 # ── Client singleton ───────────────────────────────────────────────────
 _client: AsyncOpenAI | None = None
@@ -241,6 +334,51 @@ async def call_router_llm(
     last_exception = None
     t_start = time.monotonic()
     model_used: str = candidate_models[0]
+    # ── Try Gemini Direct API first if GEMINI_API_KEY is configured ──
+    if settings.gemini_api_key:
+        try:
+            gemini_model = "gemini-3.6-flash"
+            if model_override and "gemini" in model_override.lower():
+                gemini_model = model_override.replace("models/", "").replace(":free", "").split("/")[-1]
+            
+            raw_response = await _call_gemini_api(
+                messages=[{"role": "user", "content": user_prompt}],
+                system_prompt=system_prompt,
+                model_name=gemini_model,
+                temperature=0.0,
+                max_tokens=1024,
+            )
+            cleaned_json = _clean_json_str(raw_response)
+            result: dict = json.loads(cleaned_json)
+
+            if "decision" in result:
+                if result["decision"] in ("route_existing", "create_subtopic"):
+                    tid = result.get("target_node_id")
+                    if not tid or tid not in active_nodes:
+                        result["decision"] = "route_existing"
+                        result["target_node_id"] = current_node_id
+                        result["reasoning"] = (
+                            result.get("reasoning", "")
+                            + " [fallback: target_node_id not found]"
+                        )
+
+                if "confidence" not in result or not isinstance(result["confidence"], (int, float)):
+                    result["confidence"] = 0.95
+                else:
+                    result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
+
+                if "reasoning" in result and isinstance(result["reasoning"], str):
+                    result["reasoning"] = strip_reasoning(result["reasoning"])
+
+                model_used = f"google/{gemini_model}"
+                latency_ms = int((time.monotonic() - t_start) * 1000)
+                result["model_used"] = model_used
+                result["latency_ms"] = latency_ms
+                logger.info("Router decision via Gemini Direct (%s, %dms): %s", gemini_model, latency_ms, result)
+                return result
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Gemini Direct router failed (%s). Falling back to OpenRouter candidates...", exc)
+
     for model_name in candidate_models:
         raw_response: str = ""
         try:
@@ -269,7 +407,7 @@ async def call_router_llm(
                 raw_response = response.choices[0].message.content or "{}"
 
             cleaned_json = _clean_json_str(raw_response)
-            result: dict = json.loads(cleaned_json)
+            result = json.loads(cleaned_json)
 
             if "decision" not in result:
                 raise ValueError("Missing 'decision' field in router response.")
@@ -342,6 +480,16 @@ async def stream_generator(
             "IMPORTANT: Output your response directly. Do NOT output thinking steps, reasoning preambles, or analysis of your thought process."
         )
 
+    # ── Try Gemini Direct API streaming if configured ──
+    if settings.gemini_api_key:
+        try:
+            gemini_model = "gemini-3.6-flash"
+            async for token in _stream_gemini_api(messages, clean_sys_prompt, model_name=gemini_model):
+                yield token
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Gemini Direct streaming failed (%s). Falling back to OpenRouter...", exc)
+
     full_messages = []
     if clean_sys_prompt:
         full_messages.append({"role": "system", "content": clean_sys_prompt})
@@ -396,6 +544,24 @@ async def call_generator_once(
             f"{system_prompt}\n"
             "Provide ONLY the final output. Do NOT include any reasoning, thinking process, or meta-commentary."
         )
+
+    # ── Try Gemini Direct API if configured ──
+    if settings.gemini_api_key:
+        try:
+            gemini_model = "gemini-3.6-flash"
+            res = await _call_gemini_api(
+                messages=messages,
+                system_prompt=clean_sys_prompt,
+                model_name=gemini_model,
+                temperature=0.3,
+                max_tokens=512,
+            )
+            cleaned = strip_reasoning(res)
+            if cleaned:
+                return cleaned
+            return res
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Gemini Direct once call failed (%s). Falling back to OpenRouter...", exc)
 
     full_messages = []
     if clean_sys_prompt:
