@@ -20,15 +20,13 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     # Fast/cheap model for routing classification
-    router_model: str = "nvidia/nemotron-nano-9b-v2:free"
+    router_model: str = "google/gemma-4-26b-a4b-it:free"
     # Second router model for the playground toggle (Feature 5)
-    router_model_alt: str = "nvidia/nemotron-3.5-lightning:free"
+    router_model_alt: str = "nvidia/nemotron-3-nano-30b-a3b:free"
     # High-quality model for response generation
-    generator_model: str = "nvidia/nemotron-3.5-lightning:free"
+    generator_model: str = "google/gemma-4-31b-it:free"
     # Embedding model for semantic retrieval (RAG chunk ranking)
-    # NOTE: OpenRouter does not expose a dedicated free embedding endpoint.
-    # We use sentence-transformers locally; this field is kept for future use.
-    embedding_model: str = "openai/gpt-oss-20b:free"
+    embedding_model: str = "liquid/lfm-2.5-embedding-350m:free"
 
     # ── Summarizer ──────────────────────────────────────────────────────
     # Refresh global_summary every N turns (PRD section 3.3 step 7)

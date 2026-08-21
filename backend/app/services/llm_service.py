@@ -40,6 +40,7 @@ def _get_client() -> AsyncOpenAI:
                 "HTTP-Referer": "https://semantic-graph-chat.vercel.app",
                 "X-Title": "Semantic Graph Chat",
             },
+            max_retries=1,
         )
     return _client
 
