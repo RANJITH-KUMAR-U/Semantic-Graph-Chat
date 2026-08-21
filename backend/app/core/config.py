@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # Second router model for the playground toggle (Feature 5)
     router_model_alt: str = "nvidia/nemotron-nano-9b-v2:free"
     # High-quality model for response generation
-    generator_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    generator_model: str = "nvidia/nemotron-3.5-lightning:free"
     # Embedding model for semantic retrieval (RAG chunk ranking)
     # NOTE: OpenRouter does not expose a dedicated free embedding endpoint.
     # We use sentence-transformers locally; this field is kept for future use.
