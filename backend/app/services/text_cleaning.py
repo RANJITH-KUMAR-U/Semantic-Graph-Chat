@@ -27,7 +27,7 @@ UNCLOSED_THINK_START = re.compile(
 )
 
 OUTPUT_MARKER_PATTERN = re.compile(
-    r"(?:^|\n)(?:[#*\s]*)(?:Final\s+(?:Output|Answer|Response|Result|Title)|Drafting(?:\s*-\s*Attempt\s*\d+)?|Output|Title):\s*\n?",
+    r"(?:^|\n)(?:[#*\s]*)(?:Final\s+(?:Output|Answer|Response|Result|Title)|Drafting(?:\s*-\s*Attempt\s*\d+)?|Main\s+topic|Output|Title):\s*\n?",
     re.IGNORECASE,
 )
 
@@ -43,6 +43,12 @@ PREAMBLE_PREFIXES = [
     "let me think",
     "let us think",
 ]
+
+# Pattern for numbered/bulleted reasoning lines at the start of text (e.g. "4.  **Check Constraints:** ")
+NUMBERED_REASONING_PREFIX = re.compile(
+    r"^\s*(?:\d+\.\s+|\*\s*|\-\s*)?\*\*(?:Analyze|Identify|Draft|Check|Mental|Formulate|Concept|Review|Refinement|Constraints)[^*]*\*\*[:\s]*",
+    re.IGNORECASE,
+)
 
 
 def strip_reasoning(text: str) -> str:
@@ -71,7 +77,7 @@ def strip_reasoning(text: str) -> str:
     if match:
         prefix = cleaned[:match.start()].lower()
         # If the text before the marker contains reasoning keywords, take what comes after the marker
-        if any(kw in prefix for kw in ("think", "analyz", "draft", "step", "user wants", "request")):
+        if any(kw in prefix for kw in ("think", "analyz", "draft", "step", "user wants", "request", "mental", "check")):
             remaining = cleaned[match.end():].strip()
             if remaining:
                 cleaned = remaining
@@ -79,15 +85,17 @@ def strip_reasoning(text: str) -> str:
     # 4. Strip preamble headers if at the beginning of the text
     for prefix in PREAMBLE_PREFIXES:
         if cleaned.lower().startswith(prefix):
-            # Find the first double newline or start of clear content
             paragraphs = cleaned.split("\n\n")
             if len(paragraphs) > 1:
-                # Discard paragraphs that are reasoning steps (e.g. starting with numbers or analysis)
                 for i, p in enumerate(paragraphs):
                     p_strip = p.strip().lower()
-                    if not any(p_strip.startswith(pfx) for pfx in PREAMBLE_PREFIXES) and not p_strip.startswith(("1.", "2.", "3.", "step ", "*", "-")):
+                    if not any(p_strip.startswith(pfx) for pfx in PREAMBLE_PREFIXES) and not p_strip.startswith(("1.", "2.", "3.", "4.", "step ", "*", "-")):
                         cleaned = "\n\n".join(paragraphs[i:]).strip()
                         break
             break
+
+    # 5. Strip any leftover leading numbered/bulleted reasoning headers (e.g. "4.  **Check Constraints:** ")
+    while NUMBERED_REASONING_PREFIX.match(cleaned):
+        cleaned = NUMBERED_REASONING_PREFIX.sub("", cleaned, count=1).strip()
 
     return cleaned

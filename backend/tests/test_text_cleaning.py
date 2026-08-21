@@ -33,9 +33,20 @@ def test_strip_clean_text_untouched():
 
 def test_strip_drafting_marker():
     raw = """Let's analyze what the user is asking.
-1. The user wants a title.
-
-Final Output:
-Understanding Machine Learning"""
+    1. The user wants a title.
+    
+    Final Output:
+    Understanding Machine Learning"""
     cleaned = strip_reasoning(raw)
     assert cleaned == "Understanding Machine Learning"
+
+def test_strip_numbered_check_constraints_header():
+    raw = "4.  **Check Constraints:** Quantum Computing Overview"
+    cleaned = strip_reasoning(raw)
+    assert cleaned == "Quantum Computing Overview"
+
+def test_strip_draft_mental_refinement_header():
+    raw = """4.  **Draft - Mental Refinement:**
+Quantum computing explanation. Key concepts: leverages quantum mechanics principles like superposition and entanglement..."""
+    cleaned = strip_reasoning(raw)
+    assert cleaned == "Quantum computing explanation. Key concepts: leverages quantum mechanics principles like superposition and entanglement..."
