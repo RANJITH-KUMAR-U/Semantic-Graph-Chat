@@ -543,14 +543,26 @@ async def get_available_router_models() -> list[dict]:
     """
     from app.core.config import settings
 
+    # Priority models for the playground dropdown
+    candidate_list = [
+        settings.router_model,
+        settings.router_model_alt,
+        "nvidia/nemotron-3.5-lightning:free",
+        "nvidia/nemotron-nano-9b-v2:free",
+        "nvidia/nemotron-3-nano-30b-a3b:free",
+        "google/gemma-4-31b-it:free",
+        "google/gemma-4-26b-a4b-it:free",
+        "openai/gpt-oss-20b:free",
+    ]
+
     models = []
     seen = set()
 
-    for model_id in [settings.router_model, settings.router_model_alt]:
+    for model_id in candidate_list:
         if model_id and model_id not in seen:
             seen.add(model_id)
             # Derive a short display name from the model ID
-            display_name = model_id.split("/")[-1].replace(":free", "").replace(":", " ")
+            display_name = model_id.split("/")[-1].replace(":free", "").replace(":", " ").title()
             models.append({
                 "model_id": model_id,
                 "display_name": display_name,
