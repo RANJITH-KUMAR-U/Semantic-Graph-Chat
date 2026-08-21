@@ -36,7 +36,7 @@ def _get_client() -> AsyncOpenAI:
             api_key=api_key,
             base_url=settings.openrouter_base_url,
             default_headers={
-                "HTTP-Referer": "http://localhost:8000",
+                "HTTP-Referer": "https://semantic-graph-chat.vercel.app",
                 "X-Title": "Semantic Graph Chat",
             },
         )
@@ -64,9 +64,29 @@ def _clean_json_str(raw: str) -> str:
     return cleaned
 
 
+# ── Live free-tier OpenRouter models (verified 2026-08-21) ─────────────
+# Full list from GET https://openrouter.ai/api/v1/models filtered by :free
+LIVE_FREE_MODELS = [
+    "nvidia/nemotron-3.5-lightning:free",       # Fast, good quality – primary
+    "nvidia/nemotron-3-super-120b-a12b:free",   # Large, high quality
+    "nvidia/nemotron-nano-9b-v2:free",          # Small, fast
+    "nvidia/nemotron-3-nano-30b-a3b:free",      # Medium
+    "openai/gpt-oss-20b:free",                  # GPT-compatible
+    "google/gemma-4-31b-it:free",               # Google Gemma 31B
+    "google/gemma-4-26b-a4b-it:free",           # Google Gemma 26B
+    "liquid/lfm-2.5-2.6b:free",                 # Tiny, ultra-fast fallback
+    "poolside/laguna-s-2.1:free",               # Poolside small
+    "poolside/laguna-xs-2.1:free",              # Poolside extra-small
+    "z-ai/glm-5.2:free",                        # GLM
+    "cohere/north-mini-code:free",              # Cohere code model
+    "dots-studio/dots-3-note-preview:free",     # Dots
+    "nvidia/nemotron-3-ultra-550b-a55b:free",   # Ultra large (may be slow)
+    "nvidia/nemotron-nano-12b-v2-vl:free",      # Vision-language
+]
+
+# Models known to be removed/deprecated — will be swapped to primary
 DEPRECATED_MODELS = {
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-embed-1b:free",
     "meta-llama/llama-3.1-8b-instruct:free",
     "mistralai/mistral-7b-instruct:free",
     "huggingfaceh4/zephyr-7b-beta:free",
@@ -76,30 +96,38 @@ DEPRECATED_MODELS = {
     "qwen/qwen-2.5-coder-32b-instruct:free",
     "mistralai/mistral-small-24b-instruct-2501:free",
     "inclusionai/ling-3.0-flash:free",
+    "nvidia/nemotron-3.5-content-safety:free",  # Safety model, not for chat
 }
+
+PRIMARY_FREE_MODEL = "nvidia/nemotron-3.5-lightning:free"
 
 
 def _sanitize_model_name(model_name: str | None) -> str:
     """Return an active model if model_name is empty or in DEPRECATED_MODELS."""
     if not model_name or model_name in DEPRECATED_MODELS:
-        return "nvidia/nemotron-3.5-lightning:free"
+        logger.warning("Model %r is deprecated or unset. Using primary: %s", model_name, PRIMARY_FREE_MODEL)
+        return PRIMARY_FREE_MODEL
     return model_name
 
 
 def _get_candidate_models(configured_model: str) -> list[str]:
-    """Return an ordered list of candidate models for resilience against 404s."""
+    """
+    Return an ordered list of candidate models for resilience against 404s.
+    - Puts the configured (sanitized) model first
+    - Follows with all other verified live free models
+    - Removes any deprecated models
+    """
     sanitized = _sanitize_model_name(configured_model)
-    candidates = [
-        sanitized,
-        "nvidia/nemotron-3.5-lightning:free",
-        "liquid/lfm-2.5-2.6b:free",
-        "openai/gpt-oss-20b:free",
-        "nvidia/nemotron-nano-9b-v2:free",
-        "google/gemma-4-31b-it:free",
-    ]
-    # Filter out deprecated models and remove duplicates while preserving order
-    seen = set()
-    return [m for m in candidates if m not in DEPRECATED_MODELS and not (m in seen or seen.add(m))]
+    # Build ordered list: sanitized first, then rest of live list
+    candidates = [sanitized] + [m for m in LIVE_FREE_MODELS if m != sanitized]
+    # Filter out deprecated and remove duplicates
+    seen: set[str] = set()
+    result = []
+    for m in candidates:
+        if m not in DEPRECATED_MODELS and m not in seen:
+            seen.add(m)
+            result.append(m)
+    return result
 
 
 # ── Router LLM ─────────────────────────────────────────────────────────
