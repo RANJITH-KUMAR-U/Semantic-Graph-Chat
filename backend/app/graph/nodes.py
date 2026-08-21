@@ -17,6 +17,7 @@ the hot path. The DB layer (db_models.py) is used only for REST
 history reads and persistence after each turn.
 """
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -180,17 +181,20 @@ async def create_subtopic_node(state: GraphState) -> dict:
 
 async def _generate_title(first_message: str, context_hint: str = "") -> str:
     """
-    Ask the generator LLM to produce a short (≤5 word) topic title.
-    Falls back to a truncated version of the first message on error.
+    Ask the generator LLM to produce a short 2-4 word noun-phrase topic title.
+    Falls back to a distilled version of the first message on error.
     """
-    extra = f" {context_hint}" if context_hint else ""
+    extra = f" (Context context: {context_hint})" if context_hint else ""
     try:
         raw_title = await llm_service.call_generator_once(
             messages=[{"role": "user", "content": first_message}],
             system_prompt=(
-                f"Generate a short topic title (3-5 words, no punctuation) that "
-                f"describes what the following message is about.{extra}\n"
-                "CRITICAL: Output ONLY the 3-5 word title on a single line. Do NOT output any thinking, reasoning, or explanation."
+                "You are a concise topic title generator.\n"
+                "Extract a clean 2-4 word NOUN PHRASE topic title (e.g., 'Transformer Architecture', 'Quantum Computing', 'Binary Search Trees').\n"
+                "CRITICAL RULES:\n"
+                "1. Do NOT repeat question phrasing like 'What is', 'Explain', 'How to', 'Can you', or full question sentences.\n"
+                "2. Output ONLY the 2-4 word topic title on a single line. Do NOT output any thinking, reasoning, or explanation.\n"
+                f"{extra}"
             ),
         )
         cleaned = strip_reasoning(raw_title).strip()
@@ -203,6 +207,9 @@ async def _generate_title(first_message: str, context_hint: str = "") -> str:
             title = line
             break
 
+        # Remove leading question words if present
+        title = re.sub(r"^(?:what|how|why|can you|explain|tell me about|could you|is|are|where|when|who)\s+(?:is|are|a|an|the|about|to)?\s*", "", title, flags=re.IGNORECASE).strip().strip("?.!")
+
         # If title still contains reasoning cues or error indicator or is too long, fallback
         if (
             not title
@@ -210,19 +217,22 @@ async def _generate_title(first_message: str, context_hint: str = "") -> str:
             or "error" in title.lower()
             or "thinking process" in title.lower()
             or "word count" in title.lower()
-            or len(title.split()) > 8
+            or len(title.split()) > 6
         ):
             return _fallback_title(first_message)
-        return title[:80]
+        return title[:60].title()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Title generation failed: %s", exc)
         return _fallback_title(first_message)
 
 
 def _fallback_title(text: str) -> str:
-    """Truncate the first message to produce a simple title."""
-    words = text.split()[:5]
-    return " ".join(words).rstrip(",.!?") + ("…" if len(text.split()) > 5 else "")
+    """Distill the first message into a clean short topic title."""
+    clean = re.sub(r"^(?:what|how|why|can you|explain|tell me about|could you|is|are|where|when|who)\s+(?:is|are|a|an|the|about|to)?\s*", "", text, flags=re.IGNORECASE).strip()
+    words = clean.split()[:4]
+    title = " ".join(words).rstrip(",.!?").title()
+    title = re.sub(r"\s+(?:In|For|Of|On|To|With|And|By|At)$", "", title, flags=re.IGNORECASE).strip()
+    return title if title else "General Topic"
 
 
 def _titles_overlap(a: str, b: str) -> bool:
