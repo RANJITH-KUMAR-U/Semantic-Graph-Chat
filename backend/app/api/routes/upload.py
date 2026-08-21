@@ -184,9 +184,11 @@ async def upload_file_endpoint(
                 upload_id, len(assigned_chunks), node_id, node_title,
             )
 
-    # ── Persist updated state ─────────────────────────────────────────
+    # ── Persist updated state & trigger global summary refresh ───────
     try:
         graph.update_state(graph_config, {"nodes": nodes})
+        from app.graph.summarizer import trigger_summary_refresh
+        asyncio.create_task(trigger_summary_refresh(graph, graph_config, session_id))
     except Exception as exc:
         logger.error("Failed to persist chunks to state: %s", exc)
         return UploadStatusOut(

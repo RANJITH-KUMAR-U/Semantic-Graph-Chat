@@ -21,12 +21,12 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
 
     # Fast/cheap model for routing classification
-    router_model: str = "google/gemma-4-26b-a4b-it:free"
-    # Second router model for the playground toggle (Feature 5)
-    router_model_alt: str = "nvidia/nemotron-3-nano-30b-a3b:free"
+    router_model: str = "nvidia/nemotron-nano-9b-v2:free"
+    # Second router model for the playground toggle
+    router_model_alt: str = "google/gemini-2.0-flash-lite-preview-02-05:free"
     # High-quality model for response generation
-    generator_model: str = "google/gemma-4-31b-it:free"
-    # Embedding model for semantic retrieval (RAG chunk ranking)
+    generator_model: str = "nvidia/nemotron-3.5-lightning:free"
+    # Embedding model for semantic retrieval
     embedding_model: str = "liquid/lfm-2.5-embedding-350m:free"
 
     # ── Summarizer ──────────────────────────────────────────────────────

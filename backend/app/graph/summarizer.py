@@ -53,18 +53,32 @@ async def refresh_global_summary(state: GraphState) -> str:
     node_digests: list[str] = []
     for node_id, node_data in nodes.items():
         title = node_data.get("title", "Untitled")
-        # Combine archived and live messages for the global summarizer
+        # Combine archived, live, and document chunk text for the global summarizer
         archived = list(node_data.get("archived_messages") or [])
         live = list(node_data.get("messages") or [])
+        chunks = list(node_data.get("document_chunks") or [])
         all_msgs = archived + live
         recent = all_msgs[-6:]
-        if not recent:
+
+        if not recent and not chunks:
             continue
-        turns_text = "\n".join(
-            f"  {m['role'].upper()}: {m['content'][:200]}"
-            for m in recent
-        )
-        node_digests.append(f"### Topic: {title} (node_id={node_id})\n{turns_text}")
+
+        digest_parts = []
+        if recent:
+            turns_text = "\n".join(
+                f"  {m['role'].upper()}: {m['content'][:200]}"
+                for m in recent
+            )
+            digest_parts.append(turns_text)
+
+        if chunks:
+            chunks_text = "\n".join(
+                f"  DOCUMENT CHUNK: {c.get('content', '')[:200]}"
+                for c in chunks[:3]
+            )
+            digest_parts.append(chunks_text)
+
+        node_digests.append(f"### Topic: {title} (node_id={node_id})\n" + "\n".join(digest_parts))
 
     if not node_digests:
         return state.get("global_summary", "")

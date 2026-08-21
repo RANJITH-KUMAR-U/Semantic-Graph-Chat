@@ -179,6 +179,27 @@ async def create_subtopic_node(state: GraphState) -> dict:
     }
 
 
+def _clean_title_string(text: str) -> str:
+    """Strip markdown formatting, bullets, quotes, leading question words, and trailing prepositions."""
+    # Remove leading markdown headers (#, ##), bullets (*, -), quotes (", '), brackets
+    clean = re.sub(r"^[#*`~_>\-\s]+", "", text)
+    # Remove internal markdown characters
+    clean = re.sub(r"[#*\"'\_`~\[\]\(\)]", "", clean)
+    # Strip leading question/conversational phrases
+    clean = re.sub(
+        r"^(?:what|how|why|can you|explain|tell me about|could you|is|are|where|when|who)\s+(?:is|are|a|an|the|about|to)?\s*",
+        "", clean, flags=re.IGNORECASE
+    ).strip().strip("?.!:-")
+    # Clean extra spaces
+    clean = re.sub(r"\s+", " ", clean).strip()
+    # Take first 4-5 words max
+    words = clean.split()[:5]
+    title = " ".join(words).title()
+    # Strip trailing dangling prepositions
+    title = re.sub(r"\s+(?:In|For|Of|On|To|With|And|By|At)$", "", title, flags=re.IGNORECASE).strip()
+    return title if title else "General Topic"
+
+
 async def _generate_title(first_message: str, context_hint: str = "") -> str:
     """
     Ask the generator LLM to produce a short 2-4 word noun-phrase topic title.
@@ -193,34 +214,32 @@ async def _generate_title(first_message: str, context_hint: str = "") -> str:
                 "Extract a clean 2-4 word NOUN PHRASE topic title (e.g., 'Transformer Architecture', 'Quantum Computing', 'Binary Search Trees').\n"
                 "CRITICAL RULES:\n"
                 "1. Do NOT repeat question phrasing like 'What is', 'Explain', 'How to', 'Can you', or full question sentences.\n"
-                "2. Output ONLY the 2-4 word topic title on a single line. Do NOT output any thinking, reasoning, or explanation.\n"
+                "2. Output ONLY the 2-4 word topic title on a single line. Do NOT output any markdown symbols, hashes (#), asterisks (*), or quotes.\n"
                 f"{extra}"
             ),
         )
         cleaned = strip_reasoning(raw_title).strip()
         # Find the first clean line that is not a reasoning line or numbered item
-        title = ""
+        title_raw = ""
         for raw_line in cleaned.splitlines():
-            line = raw_line.strip().strip("\"'#* `")
+            line = raw_line.strip()
             if not line or is_reasoning_line(line) or re.match(r"^\d+[\.\)]", line):
                 continue
-            title = line
+            title_raw = line
             break
 
-        # Remove leading question words if present
-        title = re.sub(r"^(?:what|how|why|can you|explain|tell me about|could you|is|are|where|when|who)\s+(?:is|are|a|an|the|about|to)?\s*", "", title, flags=re.IGNORECASE).strip().strip("?.!")
+        cleaned_title = _clean_title_string(title_raw)
 
-        # If title still contains reasoning cues or error indicator or is too long, fallback
+        # If title still contains reasoning cues or error indicator, fallback
         if (
-            not title
-            or title.startswith("[")
-            or "error" in title.lower()
-            or "thinking process" in title.lower()
-            or "word count" in title.lower()
-            or len(title.split()) > 6
+            not cleaned_title
+            or "Error" in cleaned_title
+            or "Thinking Process" in cleaned_title
+            or "Word Count" in cleaned_title
+            or len(cleaned_title.split()) > 6
         ):
             return _fallback_title(first_message)
-        return title[:60].title()
+        return cleaned_title
     except Exception as exc:  # noqa: BLE001
         logger.warning("Title generation failed: %s", exc)
         return _fallback_title(first_message)
@@ -228,11 +247,7 @@ async def _generate_title(first_message: str, context_hint: str = "") -> str:
 
 def _fallback_title(text: str) -> str:
     """Distill the first message into a clean short topic title."""
-    clean = re.sub(r"^(?:what|how|why|can you|explain|tell me about|could you|is|are|where|when|who)\s+(?:is|are|a|an|the|about|to)?\s*", "", text, flags=re.IGNORECASE).strip()
-    words = clean.split()[:4]
-    title = " ".join(words).rstrip(",.!?").title()
-    title = re.sub(r"\s+(?:In|For|Of|On|To|With|And|By|At)$", "", title, flags=re.IGNORECASE).strip()
-    return title if title else "General Topic"
+    return _clean_title_string(text)
 
 
 def _titles_overlap(a: str, b: str) -> bool:
