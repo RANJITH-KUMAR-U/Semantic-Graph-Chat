@@ -34,6 +34,7 @@ import {
   Link2,
   FileText,
   Paperclip,
+  Cpu,
 } from "lucide-react";
 
 interface MessageBubbleProps {
@@ -211,9 +212,29 @@ export function MessageBubble({
                   <HelpCircle size={11} /> Router Reasoning ({confPct}% match)
                 </div>
                 <p className="text-[11px] text-slate-300 leading-normal">{message.reasoning}</p>
+                {message.routerModelUsed && (
+                  <div className="mt-1 pt-1 border-t border-slate-800 text-[10px] text-slate-400 flex items-center justify-between">
+                    <span>Model: {message.routerModelUsed.split("/").pop()?.replace(":free", "")}</span>
+                    {message.routerLatencyMs != null && <span>{message.routerLatencyMs}ms</span>}
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          {/* Feature 5: Router Model Badge */}
+          {message.routerModelUsed && (
+            <span
+              className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-violet-500/30 bg-violet-500/10 text-violet-300 flex items-center gap-1"
+              title={`Router Model: ${message.routerModelUsed} (Latency: ${message.routerLatencyMs ?? 0}ms)`}
+            >
+              <Cpu size={10} />
+              <span>{message.routerModelUsed.split("/").pop()?.replace(":free", "")}</span>
+              {message.routerLatencyMs != null && (
+                <span className="text-violet-400/70">· {message.routerLatencyMs}ms</span>
+              )}
+            </span>
+          )}
 
           {timestamp && <span className="mb-time">{timestamp}</span>}
 
