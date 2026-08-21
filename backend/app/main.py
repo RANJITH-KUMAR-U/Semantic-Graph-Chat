@@ -48,10 +48,12 @@ async def lifespan(app: FastAPI):
       - Nothing to tear down for the MemorySaver. Add cleanup here when
         switching to the Postgres checkpointer.
     """
+    provider = "Google Gemini Direct API" if settings.gemini_api_key else "OpenRouter"
     logger.info("═══ Semantic Graph Chat API starting up ═══")
-    logger.info("Router model  : %s", settings.router_model)
-    logger.info("Generator model: %s", settings.generator_model)
-    logger.info("Checkpointer  : %s", "MemorySaver (in-process)" if settings.use_memory_saver else "Postgres")
+    logger.info("Provider        : %s", provider)
+    logger.info("Router model    : %s", settings.router_model)
+    logger.info("Generator model : %s", settings.generator_model)
+    logger.info("Checkpointer    : %s", "MemorySaver (in-process)" if settings.use_memory_saver else "Postgres")
 
     # Pre-compile graph (surfaces import/wiring errors early)
     try:
