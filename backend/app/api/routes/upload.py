@@ -11,6 +11,7 @@ appropriate topic node using the existing semantic router.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections import defaultdict

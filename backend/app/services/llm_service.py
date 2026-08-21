@@ -391,7 +391,7 @@ async def call_router_llm(
                     ],
                     response_format={"type": "json_object"},
                     temperature=0.0,
-                    max_tokens=256,
+                    max_tokens=1024,
                 )
                 raw_response = response.choices[0].message.content or "{}"
             except Exception:  # noqa: BLE001
@@ -402,7 +402,7 @@ async def call_router_llm(
                         {"role": "user", "content": user_prompt},
                     ],
                     temperature=0.0,
-                    max_tokens=256,
+                    max_tokens=1024,
                 )
                 raw_response = response.choices[0].message.content or "{}"
 
