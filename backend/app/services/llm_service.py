@@ -58,14 +58,14 @@ async def _call_gemini_api(
     if system_prompt:
         payload["system_instruction"] = {"parts": [{"text": system_prompt}]}
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=45.0) as client:
         resp = await client.post(url, json=payload)
         if resp.status_code != 200:
             raise RuntimeError(f"Gemini API error ({resp.status_code}): {resp.text[:200]}")
         data = resp.json()
         candidates = data.get("candidates", [])
         if not candidates:
-            raise RuntimeError("No candidates returned from Gemini API.")
+            raise RuntimeError(f"No candidates returned from Gemini API ({data}).")
         return candidates[0]["content"]["parts"][0]["text"]
 
 
@@ -547,21 +547,21 @@ async def call_generator_once(
 
     # ── Try Gemini Direct API if configured ──
     if settings.gemini_api_key:
-        try:
-            gemini_model = "gemini-3.6-flash"
-            res = await _call_gemini_api(
-                messages=messages,
-                system_prompt=clean_sys_prompt,
-                model_name=gemini_model,
-                temperature=0.3,
-                max_tokens=512,
-            )
-            cleaned = strip_reasoning(res)
-            if cleaned:
-                return cleaned
-            return res
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Gemini Direct once call failed (%s). Falling back to OpenRouter...", exc)
+        for gemini_model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.7-flash"]:
+            try:
+                res = await _call_gemini_api(
+                    messages=messages,
+                    system_prompt=clean_sys_prompt,
+                    model_name=gemini_model,
+                    temperature=0.3,
+                    max_tokens=1024,
+                )
+                cleaned = strip_reasoning(res)
+                if cleaned:
+                    return cleaned
+                return res
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Gemini Direct once call with %s failed (%s). Trying next Gemini candidate...", gemini_model, exc)
 
     full_messages = []
     if clean_sys_prompt:
