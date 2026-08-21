@@ -50,6 +50,13 @@ def test_strip_check_word_counts():
     cleaned = strip_reasoning(raw)
     assert cleaned == "Quantum Computing Basics"
 
+def test_strip_but_wait_user_said_reasoning():
+    raw = """But wait, the user said "Below is recent activity across topic threads in a user session."
+
+The user discussed Transformer Architecture in AI, covering key components such as Encoders, Decoders, and Self-attention mechanisms."""
+    cleaned = strip_reasoning(raw)
+    assert cleaned == "The user discussed Transformer Architecture in AI, covering key components such as Encoders, Decoders, and Self-attention mechanisms."
+
 def test_is_reasoning_line():
     assert is_reasoning_line("Check word counts:") is True
     assert is_reasoning_line("5. **Select the Best One:**") is True

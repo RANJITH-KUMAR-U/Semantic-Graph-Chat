@@ -27,7 +27,7 @@ UNCLOSED_THINK_START = re.compile(
 )
 
 OUTPUT_MARKER_PATTERN = re.compile(
-    r"(?:^|\n)(?:[#*\s]*)(?:Final\s+(?:Output|Answer|Response|Result|Title)|Drafting(?:\s*-\s*Attempt\s*\d+)?|Main\s+topic|Output|Title):\s*\n?",
+    r"(?:^|\n)(?:[#*\s]*)(?:Final\s+(?:Output|Answer|Response|Result|Title|Summary)|Drafting(?:\s*-\s*Attempt\s*\d+)?|Main\s+topic|Output|Title|Summary):\s*\n?",
     re.IGNORECASE,
 )
 
@@ -42,6 +42,16 @@ PREAMBLE_PREFIXES = [
     "let's think",
     "let me think",
     "let us think",
+    "but wait, the user",
+    "but wait",
+    "wait, the user",
+    "the user said",
+    "below is recent activity",
+    "let's see",
+    "let me see",
+    "okay, the user",
+    "ok, the user",
+    "the user is asking",
 ]
 
 # Pattern for inline reasoning prefixes like "5.  **Select the Best One:** ", "1. **Analyze:** "
@@ -60,7 +70,7 @@ def is_reasoning_line(line: str) -> bool:
         return True
     if re.match(r"^\s*\d+[\.\)]\s+\*\*", l):
         return True
-    if re.match(r"^\s*(?:check|determine|analyze|identify|draft|formulate|review|select|refine|count|note|step)\s+", l):
+    if re.match(r"^\s*(?:check|determine|analyze|identify|draft|formulate|review|select|refine|count|note|step|wait|looking)\s+", l):
         return True
     if l.endswith(":") and len(l.split()) <= 6:
         return True
@@ -92,7 +102,7 @@ def strip_reasoning(text: str) -> str:
     match = OUTPUT_MARKER_PATTERN.search(cleaned)
     if match:
         prefix = cleaned[:match.start()].lower()
-        if any(kw in prefix for kw in ("think", "analyz", "draft", "step", "user wants", "request", "mental", "check", "determine", "select")):
+        if any(kw in prefix for kw in ("think", "analyz", "draft", "step", "user wants", "request", "mental", "check", "determine", "select", "wait")):
             remaining = cleaned[match.end():].strip()
             if remaining:
                 cleaned = remaining
@@ -105,6 +115,13 @@ def strip_reasoning(text: str) -> str:
                 for i, p in enumerate(paragraphs):
                     if not is_reasoning_line(p):
                         cleaned = "\n\n".join(paragraphs[i:]).strip()
+                        break
+            else:
+                # Single paragraph starting with preamble — try splitting by quotes or newlines
+                lines = cleaned.splitlines()
+                for i, line in enumerate(lines):
+                    if not is_reasoning_line(line):
+                        cleaned = "\n".join(lines[i:]).strip()
                         break
             break
 
@@ -124,7 +141,7 @@ def strip_reasoning(text: str) -> str:
     while INLINE_REASONING_PREFIX.match(cleaned):
         m = INLINE_REASONING_PREFIX.match(cleaned)
         matched_str = m.group(0).lower()
-        if any(kw in matched_str for kw in ("select", "check", "determine", "analyze", "draft", "step", "refine", "count", "option")):
+        if any(kw in matched_str for kw in ("select", "check", "determine", "analyze", "draft", "step", "refine", "count", "option", "wait")):
             cleaned = cleaned[m.end():].strip()
         else:
             break
