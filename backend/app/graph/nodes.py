@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from app.graph.state import GraphState, NodeData
 from app.services import llm_service
-from app.services.text_cleaning import strip_reasoning
+from app.services.text_cleaning import is_reasoning_line, strip_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -194,16 +194,23 @@ async def _generate_title(first_message: str, context_hint: str = "") -> str:
             ),
         )
         cleaned = strip_reasoning(raw_title).strip()
-        # Take the first non-empty line
-        lines = [line.strip().strip("\"'#* `") for line in cleaned.splitlines() if line.strip()]
-        title = lines[0] if lines else ""
-        # If title still contains reasoning cues or error indicator, fallback
+        # Find the first clean line that is not a reasoning line or numbered item
+        title = ""
+        for raw_line in cleaned.splitlines():
+            line = raw_line.strip().strip("\"'#* `")
+            if not line or is_reasoning_line(line) or re.match(r"^\d+[\.\)]", line):
+                continue
+            title = line
+            break
+
+        # If title still contains reasoning cues or error indicator or is too long, fallback
         if (
             not title
             or title.startswith("[")
             or "error" in title.lower()
             or "thinking process" in title.lower()
-            or len(title.split()) > 10
+            or "word count" in title.lower()
+            or len(title.split()) > 8
         ):
             return _fallback_title(first_message)
         return title[:80]

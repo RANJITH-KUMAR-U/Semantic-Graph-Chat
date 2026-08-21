@@ -1,5 +1,5 @@
 import pytest
-from app.services.text_cleaning import strip_reasoning
+from app.services.text_cleaning import strip_reasoning, is_reasoning_line
 
 def test_strip_think_tags():
     raw = "<think>Let me analyze this question carefully.\n1. It asks for Python summary.\n2. In 3 sentences.</think>Python is a high-level language. It is versatile. It has great libraries."
@@ -41,12 +41,17 @@ def test_strip_drafting_marker():
     assert cleaned == "Understanding Machine Learning"
 
 def test_strip_numbered_check_constraints_header():
-    raw = "4.  **Check Constraints:** Quantum Computing Overview"
+    raw = "5.  **Select the Best One:** Quantum Computing Overview"
     cleaned = strip_reasoning(raw)
     assert cleaned == "Quantum Computing Overview"
 
-def test_strip_draft_mental_refinement_header():
-    raw = """4.  **Draft - Mental Refinement:**
-Quantum computing explanation. Key concepts: leverages quantum mechanics principles like superposition and entanglement..."""
+def test_strip_check_word_counts():
+    raw = "Check word counts:\nQuantum Computing Basics"
     cleaned = strip_reasoning(raw)
-    assert cleaned == "Quantum computing explanation. Key concepts: leverages quantum mechanics principles like superposition and entanglement..."
+    assert cleaned == "Quantum Computing Basics"
+
+def test_is_reasoning_line():
+    assert is_reasoning_line("Check word counts:") is True
+    assert is_reasoning_line("5. **Select the Best One:**") is True
+    assert is_reasoning_line("Determine What to Summarize:") is True
+    assert is_reasoning_line("Quantum Computing Overview") is False

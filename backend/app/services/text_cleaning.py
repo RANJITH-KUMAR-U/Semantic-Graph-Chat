@@ -44,11 +44,27 @@ PREAMBLE_PREFIXES = [
     "let us think",
 ]
 
-# Pattern for numbered/bulleted reasoning lines at the start of text (e.g. "4.  **Check Constraints:** ")
-NUMBERED_REASONING_PREFIX = re.compile(
-    r"^\s*(?:\d+\.\s+|\*\s*|\-\s*)?\*\*(?:Analyze|Identify|Draft|Check|Mental|Formulate|Concept|Review|Refinement|Constraints)[^*]*\*\*[:\s]*",
+# Pattern for inline reasoning prefixes like "5.  **Select the Best One:** ", "1. **Analyze:** "
+INLINE_REASONING_PREFIX = re.compile(
+    r"^\s*(?:\d+[\.\)]|\*|\-)?\s*(?:\*\*[^*]+\*\*|[A-Z][a-zA-Z\s]{1,30}:)\s*",
     re.IGNORECASE,
 )
+
+
+def is_reasoning_line(line: str) -> bool:
+    """Check if a single line is a standalone reasoning step header or meta-commentary."""
+    l = line.strip().lower()
+    if not l:
+        return True
+    if any(l.startswith(prefix) for prefix in PREAMBLE_PREFIXES):
+        return True
+    if re.match(r"^\s*\d+[\.\)]\s+\*\*", l):
+        return True
+    if re.match(r"^\s*(?:check|determine|analyze|identify|draft|formulate|review|select|refine|count|note|step)\s+", l):
+        return True
+    if l.endswith(":") and len(l.split()) <= 6:
+        return True
+    return False
 
 
 def strip_reasoning(text: str) -> str:
@@ -76,8 +92,7 @@ def strip_reasoning(text: str) -> str:
     match = OUTPUT_MARKER_PATTERN.search(cleaned)
     if match:
         prefix = cleaned[:match.start()].lower()
-        # If the text before the marker contains reasoning keywords, take what comes after the marker
-        if any(kw in prefix for kw in ("think", "analyz", "draft", "step", "user wants", "request", "mental", "check")):
+        if any(kw in prefix for kw in ("think", "analyz", "draft", "step", "user wants", "request", "mental", "check", "determine", "select")):
             remaining = cleaned[match.end():].strip()
             if remaining:
                 cleaned = remaining
@@ -88,14 +103,30 @@ def strip_reasoning(text: str) -> str:
             paragraphs = cleaned.split("\n\n")
             if len(paragraphs) > 1:
                 for i, p in enumerate(paragraphs):
-                    p_strip = p.strip().lower()
-                    if not any(p_strip.startswith(pfx) for pfx in PREAMBLE_PREFIXES) and not p_strip.startswith(("1.", "2.", "3.", "4.", "step ", "*", "-")):
+                    if not is_reasoning_line(p):
                         cleaned = "\n\n".join(paragraphs[i:]).strip()
                         break
             break
 
-    # 5. Strip any leftover leading numbered/bulleted reasoning headers (e.g. "4.  **Check Constraints:** ")
-    while NUMBERED_REASONING_PREFIX.match(cleaned):
-        cleaned = NUMBERED_REASONING_PREFIX.sub("", cleaned, count=1).strip()
+    # 5. Filter out leading standalone reasoning lines
+    lines = cleaned.splitlines()
+    start_idx = 0
+    for i, line in enumerate(lines):
+        if is_reasoning_line(line):
+            start_idx = i + 1
+        else:
+            break
+
+    if start_idx < len(lines):
+        cleaned = "\n".join(lines[start_idx:]).strip()
+
+    # 6. Strip leading inline reasoning prefix if present (e.g. "5. **Select the Best One:** ")
+    while INLINE_REASONING_PREFIX.match(cleaned):
+        m = INLINE_REASONING_PREFIX.match(cleaned)
+        matched_str = m.group(0).lower()
+        if any(kw in matched_str for kw in ("select", "check", "determine", "analyze", "draft", "step", "refine", "count", "option")):
+            cleaned = cleaned[m.end():].strip()
+        else:
+            break
 
     return cleaned
