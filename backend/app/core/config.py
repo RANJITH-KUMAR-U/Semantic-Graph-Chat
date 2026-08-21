@@ -15,9 +15,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application-wide settings, loaded from environment / .env file."""
 
-    # ── LLM via OpenRouter ──────────────────────────────────────────────
+    # ── LLM via OpenRouter & Gemini ─────────────────────────────────────
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    gemini_api_key: str = ""
 
     # Fast/cheap model for routing classification
     router_model: str = "google/gemma-4-26b-a4b-it:free"
