@@ -119,6 +119,7 @@ async def _stream_gemini_api(
 
 # ── Client singleton ───────────────────────────────────────────────────
 _client: AsyncOpenAI | None = None
+_xai_client: AsyncOpenAI | None = None
 
 
 def _get_client() -> AsyncOpenAI:
@@ -136,6 +137,19 @@ def _get_client() -> AsyncOpenAI:
             max_retries=1,
         )
     return _client
+
+
+def _get_xai_client() -> AsyncOpenAI:
+    """Return the official xAI API client."""
+    global _xai_client
+    if _xai_client is None:
+        api_key = settings.xai_api_key or "xai-dummy"
+        _xai_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://api.x.ai/v1",
+            max_retries=1,
+        )
+    return _xai_client
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -381,9 +395,10 @@ async def call_router_llm(
 
     for model_name in candidate_models:
         raw_response: str = ""
+        current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
         try:
             try:
-                response = await client.chat.completions.create(
+                response = await current_client.chat.completions.create(
                     model=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -395,7 +410,7 @@ async def call_router_llm(
                 )
                 raw_response = response.choices[0].message.content or "{}"
             except Exception:  # noqa: BLE001
-                response = await client.chat.completions.create(
+                response = await current_client.chat.completions.create(
                     model=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -499,8 +514,9 @@ async def stream_generator(
     candidate_models = _get_candidate_models(settings.generator_model)
 
     for model_name in candidate_models:
+        current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
         try:
-            stream = await client.chat.completions.create(
+            stream = await current_client.chat.completions.create(
                 model=model_name,
                 messages=full_messages,
                 stream=True,
@@ -572,8 +588,9 @@ async def call_generator_once(
     candidate_models = _get_candidate_models(settings.generator_model)
 
     for model_name in candidate_models:
+        current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
         try:
-            response = await client.chat.completions.create(
+            response = await current_client.chat.completions.create(
                 model=model_name,
                 messages=full_messages,
                 temperature=0.3,

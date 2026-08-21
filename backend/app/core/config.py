@@ -15,17 +15,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application-wide settings, loaded from environment / .env file."""
 
-    # ── LLM via OpenRouter & Gemini ─────────────────────────────────────
+    # ── LLM via OpenRouter, Gemini & xAI ─────────────────────────────────────
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     gemini_api_key: str = ""
+    xai_api_key: str = ""
 
     # Fast/cheap model for routing classification
-    router_model: str = "google/gemini-3.6-flash"
+    router_model: str = "grok-2-mini"
     # Second router model for the playground toggle
-    router_model_alt: str = "google/gemini-2.5-flash-lite"
+    router_model_alt: str = "grok-2"
     # High-quality model for response generation
-    generator_model: str = "google/gemini-3.6-flash"
+    generator_model: str = "grok-2"
     # Embedding model for semantic retrieval
     embedding_model: str = "liquid/lfm-2.5-embedding-350m:free"
 
