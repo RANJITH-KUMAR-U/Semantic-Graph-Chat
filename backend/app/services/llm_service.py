@@ -349,13 +349,13 @@ async def call_router_llm(
     t_start = time.monotonic()
     model_used: str = candidate_models[0]
     
-    # ── Try OpenRouter / xAI candidates first ──
+    # ── Step 1: OpenRouter candidates ──
+    openrouter_client = _get_client()
     for model_name in candidate_models:
         raw_response: str = ""
-        current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
         try:
             try:
-                response = await current_client.chat.completions.create(
+                response = await openrouter_client.chat.completions.create(
                     model=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -367,7 +367,7 @@ async def call_router_llm(
                 )
                 raw_response = response.choices[0].message.content or "{}"
             except Exception:  # noqa: BLE001
-                response = await current_client.chat.completions.create(
+                response = await openrouter_client.chat.completions.create(
                     model=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -388,7 +388,6 @@ async def call_router_llm(
             if result["decision"] in ("route_existing", "create_subtopic"):
                 tid = result.get("target_node_id")
                 if not tid or tid not in active_nodes:
-                    # Fall back to current node
                     result["decision"] = "route_existing"
                     result["target_node_id"] = current_node_id
                     result["reasoning"] = (
@@ -401,65 +400,122 @@ async def call_router_llm(
             else:
                 result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
 
-            # Clean any reasoning meta-text from reasoning field
             if "reasoning" in result and isinstance(result["reasoning"], str):
                 result["reasoning"] = strip_reasoning(result["reasoning"])
 
-            model_used = model_name
+            model_used = f"openrouter/{model_name}"
             latency_ms = int((time.monotonic() - t_start) * 1000)
             result["model_used"] = model_used
             result["latency_ms"] = latency_ms
-            logger.info("Router decision (%s, %dms): %s", model_name, latency_ms, result)
+            logger.info("Router decision via OpenRouter (%s, %dms): %s", model_name, latency_ms, result)
             return result
         except Exception as exc:  # noqa: BLE001
             last_exception = exc
-            logger.warning("Router model %s failed (%s). Retrying next candidate...", model_name, exc)
+            logger.warning("OpenRouter model %s failed (%s). Trying next candidate...", model_name, exc)
 
-    # ── Fallback to Gemini Direct API ──
+    # ── Step 2: Fallback to Google Gemini Direct API ──
     if settings.gemini_api_key:
-        try:
-            gemini_model = "gemini-3.6-flash"
-            if model_override and "gemini" in model_override.lower():
-                gemini_model = model_override.replace("models/", "").replace(":free", "").split("/")[-1]
-            
-            raw_response = await _call_gemini_api(
-                messages=[{"role": "user", "content": user_prompt}],
-                system_prompt=system_prompt,
-                model_name=gemini_model,
-                temperature=0.0,
-                max_tokens=1024,
-            )
-            cleaned_json = _clean_json_str(raw_response)
-            result: dict = json.loads(cleaned_json)
+        for gemini_model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.7-flash"]:
+            try:
+                raw_response = await _call_gemini_api(
+                    messages=[{"role": "user", "content": user_prompt}],
+                    system_prompt=system_prompt,
+                    model_name=gemini_model,
+                    temperature=0.0,
+                    max_tokens=1024,
+                )
+                cleaned_json = _clean_json_str(raw_response)
+                result: dict = json.loads(cleaned_json)
 
-            if "decision" in result:
-                if result["decision"] in ("route_existing", "create_subtopic"):
-                    tid = result.get("target_node_id")
-                    if not tid or tid not in active_nodes:
-                        result["decision"] = "route_existing"
-                        result["target_node_id"] = current_node_id
-                        result["reasoning"] = (
-                            result.get("reasoning", "")
-                            + " [fallback: target_node_id not found]"
-                        )
+                if "decision" in result:
+                    if result["decision"] in ("route_existing", "create_subtopic"):
+                        tid = result.get("target_node_id")
+                        if not tid or tid not in active_nodes:
+                            result["decision"] = "route_existing"
+                            result["target_node_id"] = current_node_id
+                            result["reasoning"] = (
+                                result.get("reasoning", "")
+                                + " [fallback: target_node_id not found]"
+                            )
 
-                if "confidence" not in result or not isinstance(result["confidence"], (int, float)):
-                    result["confidence"] = 0.95
-                else:
-                    result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
+                    if "confidence" not in result or not isinstance(result["confidence"], (int, float)):
+                        result["confidence"] = 0.95
+                    else:
+                        result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
 
-                if "reasoning" in result and isinstance(result["reasoning"], str):
-                    result["reasoning"] = strip_reasoning(result["reasoning"])
+                    if "reasoning" in result and isinstance(result["reasoning"], str):
+                        result["reasoning"] = strip_reasoning(result["reasoning"])
 
-                model_used = f"google/{gemini_model}"
-                latency_ms = int((time.monotonic() - t_start) * 1000)
-                result["model_used"] = model_used
-                result["latency_ms"] = latency_ms
-                logger.info("Router decision via Gemini Direct (%s, %dms): %s", gemini_model, latency_ms, result)
-                return result
-        except Exception as exc:  # noqa: BLE001
-            last_exception = exc
-            logger.warning("Gemini Direct router failed (%s).", exc)
+                    model_used = f"google/{gemini_model}"
+                    latency_ms = int((time.monotonic() - t_start) * 1000)
+                    result["model_used"] = model_used
+                    result["latency_ms"] = latency_ms
+                    logger.info("Router decision via Gemini Direct (%s, %dms): %s", gemini_model, latency_ms, result)
+                    return result
+            except Exception as exc:  # noqa: BLE001
+                last_exception = exc
+                logger.warning("Gemini Direct candidate %s failed (%s). Trying next Gemini...", gemini_model, exc)
+
+    # ── Step 3: Fallback to xAI Direct API (Grok) ──
+    if settings.xai_api_key:
+        xai_client = _get_xai_client()
+        for grok_model in ["grok-2-mini", "grok-2", "grok-beta"]:
+            try:
+                try:
+                    response = await xai_client.chat.completions.create(
+                        model=grok_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        response_format={"type": "json_object"},
+                        temperature=0.0,
+                        max_tokens=1024,
+                    )
+                    raw_response = response.choices[0].message.content or "{}"
+                except Exception:  # noqa: BLE001
+                    response = await xai_client.chat.completions.create(
+                        model=grok_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=0.0,
+                        max_tokens=1024,
+                    )
+                    raw_response = response.choices[0].message.content or "{}"
+
+                cleaned_json = _clean_json_str(raw_response)
+                result = json.loads(cleaned_json)
+
+                if "decision" in result:
+                    if result["decision"] in ("route_existing", "create_subtopic"):
+                        tid = result.get("target_node_id")
+                        if not tid or tid not in active_nodes:
+                            result["decision"] = "route_existing"
+                            result["target_node_id"] = current_node_id
+                            result["reasoning"] = (
+                                result.get("reasoning", "")
+                                + " [fallback: target_node_id not found]"
+                            )
+
+                    if "confidence" not in result or not isinstance(result["confidence"], (int, float)):
+                        result["confidence"] = 0.90
+                    else:
+                        result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
+
+                    if "reasoning" in result and isinstance(result["reasoning"], str):
+                        result["reasoning"] = strip_reasoning(result["reasoning"])
+
+                    model_used = f"xai/{grok_model}"
+                    latency_ms = int((time.monotonic() - t_start) * 1000)
+                    result["model_used"] = model_used
+                    result["latency_ms"] = latency_ms
+                    logger.info("Router decision via xAI Direct (%s, %dms): %s", grok_model, latency_ms, result)
+                    return result
+            except Exception as exc:  # noqa: BLE001
+                last_exception = exc
+                logger.warning("xAI Direct router model %s failed (%s). Trying next...", grok_model, exc)
 
     logger.error("All router models failed (%s). Defaulting based on state.", last_exception)
     latency_ms = int((time.monotonic() - t_start) * 1000)
@@ -505,18 +561,17 @@ async def stream_generator(
 
     candidate_models = _get_candidate_models(settings.generator_model)
 
-    # ── Try OpenRouter / xAI candidates first ──
+    # ── Step 1: OpenRouter candidates ──
+    openrouter_client = _get_client()
     for model_name in candidate_models:
-        current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
         try:
-            stream = await current_client.chat.completions.create(
+            stream = await openrouter_client.chat.completions.create(
                 model=model_name,
                 messages=full_messages,
                 stream=True,
                 temperature=0.7,
                 max_tokens=2048,
             )
-            # Buffer initial tokens to catch and discard <think> tags or reasoning preambles if generated
             in_think_tag = False
             async for chunk in stream:
                 delta = chunk.choices[0].delta
@@ -533,17 +588,47 @@ async def stream_generator(
                     yield token
             return  # Successful stream completion
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Generator model %s failed (%s). Trying next candidate...", model_name, exc)
+            logger.warning("OpenRouter generator model %s failed (%s). Trying next candidate...", model_name, exc)
 
-    # ── Fallback to Gemini Direct API ──
+    # ── Step 2: Fallback to Google Gemini Direct API ──
     if settings.gemini_api_key:
-        try:
-            gemini_model = "gemini-3.6-flash"
-            async for token in _stream_gemini_api(messages, clean_sys_prompt, model_name=gemini_model):
-                yield token
-            return
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Gemini Direct streaming failed (%s).", exc)
+        for gemini_model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.7-flash"]:
+            try:
+                async for token in _stream_gemini_api(messages, clean_sys_prompt, model_name=gemini_model):
+                    yield token
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Gemini Direct streaming failed with %s (%s). Trying next...", gemini_model, exc)
+
+    # ── Step 3: Fallback to xAI Direct API (Grok) ──
+    if settings.xai_api_key:
+        xai_client = _get_xai_client()
+        for grok_model in ["grok-2-mini", "grok-2", "grok-beta"]:
+            try:
+                stream = await xai_client.chat.completions.create(
+                    model=grok_model,
+                    messages=full_messages,
+                    stream=True,
+                    temperature=0.7,
+                    max_tokens=2048,
+                )
+                in_think_tag = False
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        token = delta.content
+                        if "<think>" in token or "<reasoning>" in token:
+                            in_think_tag = True
+                            continue
+                        if "</think>" in token or "</reasoning>" in token:
+                            in_think_tag = False
+                            continue
+                        if in_think_tag:
+                            continue
+                        yield token
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("xAI Direct streaming model %s failed (%s). Trying next...", grok_model, exc)
 
     yield "\n\n[Error generating response: All LLM models unavailable]"
 
@@ -571,11 +656,11 @@ async def call_generator_once(
 
     candidate_models = _get_candidate_models(settings.generator_model)
 
-    # ── Try OpenRouter / xAI candidates first ──
+    # ── Step 1: OpenRouter candidates ──
+    openrouter_client = _get_client()
     for model_name in candidate_models:
-        current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
         try:
-            response = await current_client.chat.completions.create(
+            response = await openrouter_client.chat.completions.create(
                 model=model_name,
                 messages=full_messages,
                 temperature=0.3,
@@ -583,17 +668,16 @@ async def call_generator_once(
             )
             content = response.choices[0].message.content or ""
             if content:
-                # Strip any thinking / reasoning preambles
                 cleaned = strip_reasoning(content)
                 if cleaned:
                     return cleaned
                 return content
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Generator once model %s failed (%s). Trying next candidate...", model_name, exc)
+            logger.warning("OpenRouter generator once model %s failed (%s). Trying next candidate...", model_name, exc)
 
-    # ── Fallback to Gemini Direct API ──
+    # ── Step 2: Fallback to Google Gemini Direct API ──
     if settings.gemini_api_key:
-        for gemini_model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.7-flash"]:
+        for gemini_model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.7-flash"]:
             try:
                 res = await _call_gemini_api(
                     messages=messages,
@@ -607,6 +691,26 @@ async def call_generator_once(
                     return cleaned
                 return res
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Gemini Direct once call with %s failed (%s).", gemini_model, exc)
+                logger.warning("Gemini Direct once call with %s failed (%s). Trying next...", gemini_model, exc)
+
+    # ── Step 3: Fallback to xAI Direct API (Grok) ──
+    if settings.xai_api_key:
+        xai_client = _get_xai_client()
+        for grok_model in ["grok-2-mini", "grok-2", "grok-beta"]:
+            try:
+                response = await xai_client.chat.completions.create(
+                    model=grok_model,
+                    messages=full_messages,
+                    temperature=0.3,
+                    max_tokens=512,
+                )
+                content = response.choices[0].message.content or ""
+                if content:
+                    cleaned = strip_reasoning(content)
+                    if cleaned:
+                        return cleaned
+                    return content
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("xAI Direct generator once model %s failed (%s). Trying next...", grok_model, exc)
 
     return "[Generator error: All LLM models unavailable]"
