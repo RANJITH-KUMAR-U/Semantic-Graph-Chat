@@ -348,51 +348,8 @@ async def call_router_llm(
     last_exception = None
     t_start = time.monotonic()
     model_used: str = candidate_models[0]
-    # ── Try Gemini Direct API first if GEMINI_API_KEY is configured ──
-    if settings.gemini_api_key:
-        try:
-            gemini_model = "gemini-3.6-flash"
-            if model_override and "gemini" in model_override.lower():
-                gemini_model = model_override.replace("models/", "").replace(":free", "").split("/")[-1]
-            
-            raw_response = await _call_gemini_api(
-                messages=[{"role": "user", "content": user_prompt}],
-                system_prompt=system_prompt,
-                model_name=gemini_model,
-                temperature=0.0,
-                max_tokens=1024,
-            )
-            cleaned_json = _clean_json_str(raw_response)
-            result: dict = json.loads(cleaned_json)
-
-            if "decision" in result:
-                if result["decision"] in ("route_existing", "create_subtopic"):
-                    tid = result.get("target_node_id")
-                    if not tid or tid not in active_nodes:
-                        result["decision"] = "route_existing"
-                        result["target_node_id"] = current_node_id
-                        result["reasoning"] = (
-                            result.get("reasoning", "")
-                            + " [fallback: target_node_id not found]"
-                        )
-
-                if "confidence" not in result or not isinstance(result["confidence"], (int, float)):
-                    result["confidence"] = 0.95
-                else:
-                    result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
-
-                if "reasoning" in result and isinstance(result["reasoning"], str):
-                    result["reasoning"] = strip_reasoning(result["reasoning"])
-
-                model_used = f"google/{gemini_model}"
-                latency_ms = int((time.monotonic() - t_start) * 1000)
-                result["model_used"] = model_used
-                result["latency_ms"] = latency_ms
-                logger.info("Router decision via Gemini Direct (%s, %dms): %s", gemini_model, latency_ms, result)
-                return result
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Gemini Direct router failed (%s). Falling back to OpenRouter candidates...", exc)
-
+    
+    # ── Try OpenRouter / xAI candidates first ──
     for model_name in candidate_models:
         raw_response: str = ""
         current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
@@ -458,6 +415,52 @@ async def call_router_llm(
             last_exception = exc
             logger.warning("Router model %s failed (%s). Retrying next candidate...", model_name, exc)
 
+    # ── Fallback to Gemini Direct API ──
+    if settings.gemini_api_key:
+        try:
+            gemini_model = "gemini-3.6-flash"
+            if model_override and "gemini" in model_override.lower():
+                gemini_model = model_override.replace("models/", "").replace(":free", "").split("/")[-1]
+            
+            raw_response = await _call_gemini_api(
+                messages=[{"role": "user", "content": user_prompt}],
+                system_prompt=system_prompt,
+                model_name=gemini_model,
+                temperature=0.0,
+                max_tokens=1024,
+            )
+            cleaned_json = _clean_json_str(raw_response)
+            result: dict = json.loads(cleaned_json)
+
+            if "decision" in result:
+                if result["decision"] in ("route_existing", "create_subtopic"):
+                    tid = result.get("target_node_id")
+                    if not tid or tid not in active_nodes:
+                        result["decision"] = "route_existing"
+                        result["target_node_id"] = current_node_id
+                        result["reasoning"] = (
+                            result.get("reasoning", "")
+                            + " [fallback: target_node_id not found]"
+                        )
+
+                if "confidence" not in result or not isinstance(result["confidence"], (int, float)):
+                    result["confidence"] = 0.95
+                else:
+                    result["confidence"] = max(0.0, min(1.0, float(result["confidence"])))
+
+                if "reasoning" in result and isinstance(result["reasoning"], str):
+                    result["reasoning"] = strip_reasoning(result["reasoning"])
+
+                model_used = f"google/{gemini_model}"
+                latency_ms = int((time.monotonic() - t_start) * 1000)
+                result["model_used"] = model_used
+                result["latency_ms"] = latency_ms
+                logger.info("Router decision via Gemini Direct (%s, %dms): %s", gemini_model, latency_ms, result)
+                return result
+        except Exception as exc:  # noqa: BLE001
+            last_exception = exc
+            logger.warning("Gemini Direct router failed (%s).", exc)
+
     logger.error("All router models failed (%s). Defaulting based on state.", last_exception)
     latency_ms = int((time.monotonic() - t_start) * 1000)
     return {
@@ -495,24 +498,14 @@ async def stream_generator(
             "IMPORTANT: Output your response directly. Do NOT output thinking steps, reasoning preambles, or analysis of your thought process."
         )
 
-    # ── Try Gemini Direct API streaming if configured ──
-    if settings.gemini_api_key:
-        try:
-            gemini_model = "gemini-3.6-flash"
-            async for token in _stream_gemini_api(messages, clean_sys_prompt, model_name=gemini_model):
-                yield token
-            return
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Gemini Direct streaming failed (%s). Falling back to OpenRouter...", exc)
-
     full_messages = []
     if clean_sys_prompt:
         full_messages.append({"role": "system", "content": clean_sys_prompt})
     full_messages.extend(messages)
 
-    client = _get_client()
     candidate_models = _get_candidate_models(settings.generator_model)
 
+    # ── Try OpenRouter / xAI candidates first ──
     for model_name in candidate_models:
         current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
         try:
@@ -542,6 +535,16 @@ async def stream_generator(
         except Exception as exc:  # noqa: BLE001
             logger.warning("Generator model %s failed (%s). Trying next candidate...", model_name, exc)
 
+    # ── Fallback to Gemini Direct API ──
+    if settings.gemini_api_key:
+        try:
+            gemini_model = "gemini-3.6-flash"
+            async for token in _stream_gemini_api(messages, clean_sys_prompt, model_name=gemini_model):
+                yield token
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Gemini Direct streaming failed (%s).", exc)
+
     yield "\n\n[Error generating response: All LLM models unavailable]"
 
 
@@ -561,32 +564,14 @@ async def call_generator_once(
             "Provide ONLY the final output. Do NOT include any reasoning, thinking process, or meta-commentary."
         )
 
-    # ── Try Gemini Direct API if configured ──
-    if settings.gemini_api_key:
-        for gemini_model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.7-flash"]:
-            try:
-                res = await _call_gemini_api(
-                    messages=messages,
-                    system_prompt=clean_sys_prompt,
-                    model_name=gemini_model,
-                    temperature=0.3,
-                    max_tokens=1024,
-                )
-                cleaned = strip_reasoning(res)
-                if cleaned:
-                    return cleaned
-                return res
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Gemini Direct once call with %s failed (%s). Trying next Gemini candidate...", gemini_model, exc)
-
     full_messages = []
     if clean_sys_prompt:
         full_messages.append({"role": "system", "content": clean_sys_prompt})
     full_messages.extend(messages)
 
-    client = _get_client()
     candidate_models = _get_candidate_models(settings.generator_model)
 
+    # ── Try OpenRouter / xAI candidates first ──
     for model_name in candidate_models:
         current_client = _get_xai_client() if settings.xai_api_key and model_name.startswith("grok") else _get_client()
         try:
@@ -605,5 +590,23 @@ async def call_generator_once(
                 return content
         except Exception as exc:  # noqa: BLE001
             logger.warning("Generator once model %s failed (%s). Trying next candidate...", model_name, exc)
+
+    # ── Fallback to Gemini Direct API ──
+    if settings.gemini_api_key:
+        for gemini_model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-3.7-flash"]:
+            try:
+                res = await _call_gemini_api(
+                    messages=messages,
+                    system_prompt=clean_sys_prompt,
+                    model_name=gemini_model,
+                    temperature=0.3,
+                    max_tokens=1024,
+                )
+                cleaned = strip_reasoning(res)
+                if cleaned:
+                    return cleaned
+                return res
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Gemini Direct once call with %s failed (%s).", gemini_model, exc)
 
     return "[Generator error: All LLM models unavailable]"
